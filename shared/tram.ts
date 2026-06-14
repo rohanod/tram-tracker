@@ -53,12 +53,17 @@ export function isKnownLine(value) {
 }
 
 export function normalizeLine(value) {
-  const line = String(value ?? "").trim();
-  if (line === "unclassified") {
-    return line;
+  const rawLine = String(value ?? "").trim();
+  if (rawLine === "unclassified") {
+    return rawLine;
   }
 
-  return /^[A-Za-z0-9]{1,8}$/.test(line) ? line : "unclassified";
+  const line = rawLine.toUpperCase();
+  if (/^\d+$/.test(line)) {
+    return String(Number(line));
+  }
+
+  return /^[A-Za-z0-9+]{1,8}$/.test(line) ? line : "unclassified";
 }
 
 export function isKnownObservationType(value) {

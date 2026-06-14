@@ -1,179 +1,87 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
-const LINE_SOURCE = "sitg-tpg-lignes.geojson";
-const STOP_SOURCE = "stops.json";
-const OUTPUT_PATH = "cdn/tpg-line-data-v1.json";
-const SIMPLIFY_TOLERANCE_METERS = 70;
-const ROUTE_MODES = new Set(["BUS", "TRAM"]);
+const LINE_SOURCE = "lines.json";
+const OUTPUT_PATH = "cdn/tpg-lines-v1.json";
 
-const [lineData, stopData] = await Promise.all([
-  readJson(LINE_SOURCE),
-  readJson(STOP_SOURCE)
-]);
+const sourceLines = JSON.parse(await readFile(LINE_SOURCE, "utf8"));
+const byLine = new Map();
 
-const routes = lineData.features
-  .filter((feature) => ROUTE_MODES.has(String(feature.properties?.VEHICULE ?? "").toUpperCase()))
-  .map((feature) => routeFromFeature(feature))
-  .filter((route) => route.p.length > 0)
-  .sort((a, b) => compareNatural(a.l, b.l) || a.d.localeCompare(b.d));
+for (const sourceLine of sourceLines) {
+  const line = canonicalLine(sourceLine?.number);
+  const color = normalizeHex(sourceLine?.colour);
+  if (!line || !color || byLine.has(line)) {
+    continue;
+  }
 
-const stops = stopData.stops
-  .map((stop) => stopFromSource(stop))
-  .filter(Boolean)
-  .sort((a, b) => a.n.localeCompare(b.n));
+  byLine.set(line, {
+    l: line,
+    c: color,
+    f: foregroundFor(color),
+    t: String(sourceLine?.type ?? ""),
+    u: String(sourceLine?.link ?? "")
+  });
+}
 
+const lines = Array.from(byLine.values()).sort((a, b) => compareTransitLines(a.l, b.l));
 const output = {
   v: 1,
   g: new Date().toISOString(),
-  src: [LINE_SOURCE, STOP_SOURCE],
-  tol: SIMPLIFY_TOLERANCE_METERS,
-  r: routes,
-  s: stops
+  src: LINE_SOURCE,
+  lines
 };
 
 await mkdir("cdn", { recursive: true });
 await writeFile(OUTPUT_PATH, JSON.stringify(output));
 console.log(`Wrote ${OUTPUT_PATH}`);
-console.log(`${routes.length} route geometries, ${stops.length} stops`);
+console.log(`${lines.length} deduplicated TPG lines`);
 
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-function routeFromFeature(feature) {
-  const properties = feature.properties ?? {};
-  return {
-    i: String(feature.id ?? properties.OBJECTID ?? ""),
-    l: String(properties.LIGNE ?? ""),
-    d: String(properties.DIRECTION ?? ""),
-    m: String(properties.VEHICULE ?? "").toLowerCase(),
-    p: geometryPaths(feature.geometry)
-      .map((path) => simplifyPath(path.map(([lon, lat]) => [round5(lat), round5(lon)]), SIMPLIFY_TOLERANCE_METERS))
-      .filter((path) => path.length >= 2)
-  };
-}
-
-function geometryPaths(geometry) {
-  if (!geometry) {
-    return [];
+function canonicalLine(value) {
+  const line = String(value ?? "").trim().toUpperCase();
+  if (!line) {
+    return "";
   }
 
-  if (geometry.type === "LineString") {
-    return [geometry.coordinates];
+  if (/^\d+$/.test(line)) {
+    return String(Number(line));
   }
 
-  if (geometry.type === "MultiLineString") {
-    return geometry.coordinates;
+  return /^[A-Z0-9+]{1,8}$/.test(line) ? line : "";
+}
+
+function normalizeHex(value) {
+  const hex = String(value ?? "").trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(hex) ? hex : "";
+}
+
+function foregroundFor(hex) {
+  const red = Number.parseInt(hex.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(hex.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(hex.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * toLinear(red) + 0.7152 * toLinear(green) + 0.0722 * toLinear(blue);
+  const blackContrast = (luminance + 0.05) / 0.05;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  return blackContrast >= whiteContrast ? "#111111" : "#ffffff";
+}
+
+function toLinear(value) {
+  return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+function compareTransitLines(a, b) {
+  const numberA = /^\d+$/.test(a) ? Number(a) : Number.NaN;
+  const numberB = /^\d+$/.test(b) ? Number(b) : Number.NaN;
+
+  if (Number.isFinite(numberA) && Number.isFinite(numberB)) {
+    return numberA - numberB;
   }
 
-  return [];
-}
-
-function stopFromSource(stop) {
-  const platform = stop.platforms?.find((candidate) => candidate.id === stop.id) ?? stop.platforms?.[0];
-  const location = platform?.location;
-  if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lon)) {
-    return null;
+  if (Number.isFinite(numberA)) {
+    return -1;
   }
 
-  return {
-    i: String(stop.id ?? ""),
-    n: String(stop.name ?? ""),
-    a: round5(location.lat),
-    o: round5(location.lon),
-    v: uniqueServices(stop.platforms ?? [])
-  };
-}
-
-function uniqueServices(platforms) {
-  const byKey = new Map();
-
-  for (const platform of platforms) {
-    for (const service of platform.services ?? []) {
-      const line = String(service.line ?? "");
-      const mode = String(service.mode ?? "");
-      const directionId = String(service.directionId ?? "");
-      const headsign = String(service.headsign ?? "");
-      const key = [line, mode, directionId, headsign].join("|");
-      if (!line || byKey.has(key)) {
-        continue;
-      }
-
-      byKey.set(key, [line, mode, directionId, headsign]);
-    }
+  if (Number.isFinite(numberB)) {
+    return 1;
   }
 
-  return Array.from(byKey.values()).sort((a, b) => compareNatural(a[0], b[0]) || a[3].localeCompare(b[3]));
-}
-
-function simplifyPath(points, toleranceMeters) {
-  if (points.length <= 2) {
-    return points;
-  }
-
-  const keep = new Array(points.length).fill(false);
-  keep[0] = true;
-  keep[points.length - 1] = true;
-  simplifyRange(points, 0, points.length - 1, toleranceMeters, keep);
-  return points.filter((_, index) => keep[index]);
-}
-
-function simplifyRange(points, startIndex, endIndex, toleranceMeters, keep) {
-  let maxDistance = 0;
-  let maxIndex = startIndex;
-  const start = asPoint(points[startIndex]);
-  const end = asPoint(points[endIndex]);
-
-  for (let index = startIndex + 1; index < endIndex; index += 1) {
-    const distance = distanceToSegmentMeters(asPoint(points[index]), start, end);
-    if (distance > maxDistance) {
-      maxDistance = distance;
-      maxIndex = index;
-    }
-  }
-
-  if (maxDistance > toleranceMeters) {
-    keep[maxIndex] = true;
-    simplifyRange(points, startIndex, maxIndex, toleranceMeters, keep);
-    simplifyRange(points, maxIndex, endIndex, toleranceMeters, keep);
-  }
-}
-
-function asPoint(point) {
-  return { lat: point[0], lon: point[1] };
-}
-
-function distanceToSegmentMeters(point, start, end) {
-  const originLat = degreesToRadians(point.lat);
-  const metersPerDegreeLat = 111320;
-  const metersPerDegreeLon = 111320 * Math.cos(originLat);
-
-  const pointX = point.lon * metersPerDegreeLon;
-  const pointY = point.lat * metersPerDegreeLat;
-  const startX = start.lon * metersPerDegreeLon;
-  const startY = start.lat * metersPerDegreeLat;
-  const endX = end.lon * metersPerDegreeLon;
-  const endY = end.lat * metersPerDegreeLat;
-  const dx = endX - startX;
-  const dy = endY - startY;
-  const lengthSquared = dx * dx + dy * dy;
-
-  if (lengthSquared === 0) {
-    return Math.hypot(pointX - startX, pointY - startY);
-  }
-
-  const t = Math.max(0, Math.min(1, ((pointX - startX) * dx + (pointY - startY) * dy) / lengthSquared));
-  return Math.hypot(pointX - (startX + t * dx), pointY - (startY + t * dy));
-}
-
-function compareNatural(a, b) {
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
-}
-
-function round5(value) {
-  return Math.round(Number(value) * 100000) / 100000;
-}
-
-function degreesToRadians(value) {
-  return (value * Math.PI) / 180;
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }

@@ -1,0 +1,506 @@
+[
+    {
+        "link": "https://www.tpg.ch/en/lignes/12",
+        "colour": "#F5A300",
+        "number": "12",
+        "type": "Tramways"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/14",
+        "colour": "#5A1E82",
+        "number": "14",
+        "type": "Tramways"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/15",
+        "colour": "#84471C",
+        "number": "15",
+        "type": "Tramways"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/17",
+        "colour": "#00ACE7",
+        "number": "17",
+        "type": "Tramways"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/18",
+        "colour": "#B82F89",
+        "number": "18",
+        "type": "Tramways"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/2",
+        "colour": "#D2DB4A",
+        "number": "2",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/3",
+        "colour": "#B82F89",
+        "number": "3",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/6",
+        "colour": "#008CBE",
+        "number": "6",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/7",
+        "colour": "#00A828",
+        "number": "7",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/10",
+        "colour": "#006E3D",
+        "number": "10",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/19",
+        "colour": "#A05909",
+        "number": "19",
+        "type": "Trolleybus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/1",
+        "colour": "#5A1E82",
+        "number": "1",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/5",
+        "colour": "#00ACE7",
+        "number": "5",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/8",
+        "colour": "#84471C",
+        "number": "8",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/9",
+        "colour": "#E2001D",
+        "number": "9",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/11",
+        "colour": "#82419E",
+        "number": "11",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/20",
+        "colour": "#00A828",
+        "number": "20",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/21",
+        "colour": "#78003C",
+        "number": "21",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/22",
+        "colour": "#5A1E82",
+        "number": "22",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/23",
+        "colour": "#B82F89",
+        "number": "23",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/25",
+        "colour": "#A05909",
+        "number": "25",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/28",
+        "colour": "#82419E",
+        "number": "28",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/31",
+        "colour": "#00B0A4",
+        "number": "31",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/32",
+        "colour": "#89CBBE",
+        "number": "32",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/33",
+        "colour": "#00B0A4",
+        "number": "33",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/34",
+        "colour": "#89CBBE",
+        "number": "34",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/37",
+        "colour": "#005F61",
+        "number": "37",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/38",
+        "colour": "#005F61",
+        "number": "38",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/39",
+        "colour": "#00B0A4",
+        "number": "39",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/40",
+        "colour": "#89CBBE",
+        "number": "40",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/41",
+        "colour": "#00B0A4",
+        "number": "41",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/42",
+        "colour": "#00B0A4",
+        "number": "42",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/43",
+        "colour": "#89CBBE",
+        "number": "43",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/44",
+        "colour": "#00B0A4",
+        "number": "44",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/45",
+        "colour": "#89CBBE",
+        "number": "45",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/46",
+        "colour": "#00B0A4",
+        "number": "46",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/47",
+        "colour": "#00B0A4",
+        "number": "47",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/48",
+        "colour": "#89CBBE",
+        "number": "48",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/50",
+        "colour": "#00B0A4",
+        "number": "50",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/51",
+        "colour": "#00B0A4",
+        "number": "51",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/52",
+        "colour": "#89CBBE",
+        "number": "52",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/53",
+        "colour": "#89CBBE",
+        "number": "53",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/54",
+        "colour": "#89CBBE",
+        "number": "54",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/55",
+        "colour": "#005F61",
+        "number": "55",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/57",
+        "colour": "#89CBBE",
+        "number": "57",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/59",
+        "colour": "#005F61",
+        "number": "59",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/60",
+        "colour": "#EC619F",
+        "number": "60",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/61",
+        "colour": "#F5B5D2",
+        "number": "61",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/64",
+        "colour": "#EC619F",
+        "number": "64",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/66",
+        "colour": "#F5B5D2",
+        "number": "66",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/67",
+        "colour": "#F5B5D2",
+        "number": "67",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/68",
+        "colour": "#EC619F",
+        "number": "68",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/69",
+        "colour": "#F5B5D2",
+        "number": "69",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/70",
+        "colour": "#00B0A4",
+        "number": "70",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/71",
+        "colour": "#005F61",
+        "number": "71",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/72",
+        "colour": "#89CBBE",
+        "number": "72",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/73",
+        "colour": "#005F61",
+        "number": "73",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/74",
+        "colour": "#89CBBE",
+        "number": "74",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/75",
+        "colour": "#005F61",
+        "number": "75",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/78",
+        "colour": "#005F61",
+        "number": "78",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/80",
+        "colour": "#F5B5D2",
+        "number": "80",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/82",
+        "colour": "#EC619F",
+        "number": "82",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/83",
+        "colour": "#EC619F",
+        "number": "83",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/91",
+        "colour": "#005F61",
+        "number": "91",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/92",
+        "colour": "#89CBBE",
+        "number": "92",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/A",
+        "colour": "#FF7E00",
+        "number": "A",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/E",
+        "colour": "#FF7E00",
+        "number": "E",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/G",
+        "colour": "#FF9BAA",
+        "number": "G",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/L",
+        "colour": "#FF7E00",
+        "number": "L",
+        "type": "Autobus"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/E+",
+        "colour": "#000000",
+        "number": "E+",
+        "type": "Lignes express"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/G+",
+        "colour": "#000000",
+        "number": "G+",
+        "type": "Lignes express"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C1",
+        "colour": "#000000",
+        "number": "C1",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C3",
+        "colour": "#000000",
+        "number": "C3",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C4",
+        "colour": "#000000",
+        "number": "C4",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C5",
+        "colour": "#000000",
+        "number": "C5",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C6",
+        "colour": "#000000",
+        "number": "C6",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C7",
+        "colour": "#000000",
+        "number": "C7",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C8",
+        "colour": "#000000",
+        "number": "C8",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/C9",
+        "colour": "#000000",
+        "number": "C9",
+        "type": "Lignes scolaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/271",
+        "colour": "#FFDC00",
+        "number": "271",
+        "type": "Lignes interurbaines transfrontalières et autres partenaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/272",
+        "colour": "#00B0A4",
+        "number": "272",
+        "type": "Lignes interurbaines transfrontalières et autres partenaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/274",
+        "colour": "#EC619F",
+        "number": "274",
+        "type": "Lignes interurbaines transfrontalières et autres partenaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/M",
+        "colour": "#00A828",
+        "number": "M",
+        "type": "Lignes interurbaines transfrontalières et autres partenaires"
+    },
+    {
+        "link": "https://www.tpg.ch/en/lignes/N",
+        "colour": "#008CBE",
+        "number": "N",
+        "type": "Lignes interurbaines transfrontalières et autres partenaires"
+    }
+]

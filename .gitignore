@@ -2,7 +2,6 @@
 .env.lakebed.server
 .DS_Store
 .agents/
-lines.json
 stops.json
 sitg-tpg-lignes.geojson
 skills-lock.json

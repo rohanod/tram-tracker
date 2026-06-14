@@ -2,7 +2,7 @@ import { SignInWithGoogle, signOut, useAuth, useMutation, useQuery } from "lakeb
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CORRIDORS, GENEVA_BOUNDS } from "../shared/corridors";
 import { isDeleteSettledResult } from "../shared/sync";
-import { classifyCapture, isValidVehicleNumber, LEG_LABELS, LINE_LABELS, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
+import { classifyCapture, isValidVehicleNumber, LEG_LABELS, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
 
 type Viewer = {
   isAllowed: boolean;
@@ -142,6 +142,14 @@ type MapLibreGlobal = {
   Popup: new (options?: Record<string, unknown>) => MapLibrePopup;
 };
 
+type LineInfo = {
+  line: string;
+  color: string;
+  foreground: string;
+  type: string;
+  link: string;
+};
+
 declare global {
   interface Window {
     maplibregl?: MapLibreGlobal;
@@ -164,6 +172,12 @@ const MIN_REVIEW_MAP_ZOOM = 12;
 const MAX_REVIEW_MAP_ZOOM = 18;
 const REVIEW_RANGE_METERS = 150;
 const MAP_CENTER = { lat: 46.2044, lon: 6.1458 };
+const DEFAULT_LINE_CATALOG: Record<string, LineInfo> = {
+  "12": { line: "12", color: "#f5a300", foreground: "#111111", type: "Tramways", link: "" },
+  "14": { line: "14", color: "#5a1e82", foreground: "#ffffff", type: "Tramways", link: "" },
+  "17": { line: "17", color: "#00ace7", foreground: "#111111", type: "Tramways", link: "" },
+  "18": { line: "18", color: "#b82f89", foreground: "#ffffff", type: "Tramways", link: "" }
+};
 const LINE_COLORS: Record<string, string> = {
   "12": "#f5a300",
   "14": "#5a1e82",
@@ -176,7 +190,7 @@ const LINE_FOREGROUNDS: Record<string, string> = {
   "17": "#111111",
   "18": "#ffffff"
 };
-const CDN_LINE_DATA_URL = "https://cdn.jsdelivr.net/gh/rohanod/tram-tracker@main/cdn/tpg-line-data-v1.json";
+const CDN_LINE_DATA_URL = "https://cdn.jsdelivr.net/gh/rohanod/tram-tracker@main/cdn/tpg-lines-v1.json";
 const MAPLIBRE_SCRIPT_URL = "https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS_URL = "https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.css";
 const REVIEW_MAP_STYLE = {
@@ -238,6 +252,7 @@ export function App() {
   const [lineTouched, setLineTouched] = useState(false);
   const [showOtherLine, setShowOtherLine] = useState(false);
   const [allLineOptions, setAllLineOptions] = useState<string[]>([...MAIN_LINE_VALUES]);
+  const [lineCatalog, setLineCatalog] = useState<Record<string, LineInfo>>(DEFAULT_LINE_CATALOG);
   const [location, setLocation] = useState<LocationState>({ status: "idle" });
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
   const [priorAuthorized, setPriorAuthorized] = useState(false);
@@ -265,6 +280,7 @@ export function App() {
   const currentLegValues = useMemo(() => legValuesForCapturedAt(nowIso), [nowIso]);
   const selectedLineIsMain = MAIN_LINE_VALUES.includes(selectedLine);
   const otherLineOptions = useMemo(() => allLineOptions.filter((line) => !MAIN_LINE_VALUES.includes(line)), [allLineOptions]);
+  const selectedLineInfo = lineCatalog[normalizeLine(selectedLine)];
   const visibleEntries = useMemo(
     () => [...localEntries].filter((entry) => entry.syncStatus !== "delete_pending").sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)),
     [localEntries]
@@ -320,7 +336,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void loadLineOptions().then(setAllLineOptions).catch((err) => debugSync("line-options-load-failed", { error: errorMessage(err) }));
+    void loadLineCatalog()
+      .then((catalog) => {
+        setLineCatalog(catalog);
+        setAllLineOptions(Object.keys(catalog).sort(compareTransitLines));
+      })
+      .catch((err) => debugSync("line-options-load-failed", { error: errorMessage(err) }));
   }, []);
 
   useEffect(() => {
@@ -688,7 +709,7 @@ export function App() {
                     <h2>Line</h2>
                     <p className="subtle">Pick one of the main lines or choose another TPG line.</p>
                   </div>
-                  <span>{lineLabel(selectedLine)}</span>
+                  <span>{selectedLineInfo?.type || lineLabel(selectedLine)}</span>
                 </div>
 
                 <div className="main-line-grid" role="radiogroup" aria-label="Main lines">
@@ -702,9 +723,9 @@ export function App() {
                         role="radio"
                         aria-checked={active}
                         style={{
-                          borderColor: lineColor(line),
-                          backgroundColor: active ? lineColor(line) : "var(--surface)",
-                          color: active ? lineForeground(line) : lineColor(line)
+                          borderColor: lineColor(line, lineCatalog),
+                          backgroundColor: active ? lineColor(line, lineCatalog) : "var(--surface)",
+                          color: active ? lineForeground(line, lineCatalog) : lineColor(line, lineCatalog)
                         }}
                         onClick={() => {
                           setLineTouched(true);
@@ -730,22 +751,20 @@ export function App() {
                 </div>
 
                 {showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified") ? (
-                  <select
-                    className="other-line-select"
-                    aria-label="Choose another line"
-                    value={!selectedLineIsMain && selectedLine !== "unclassified" ? selectedLine : ""}
-                    onChange={(event) => {
-                      setLineTouched(true);
-                      setSelectedLine(normalizeLine(event.currentTarget.value));
-                    }}
-                  >
-                    <option value="">Choose line</option>
+                  <div className="other-line-list" role="radiogroup" aria-label="Choose another line">
                     {otherLineOptions.map((line) => (
-                      <option key={line} value={line}>
-                        {lineLabel(line)}
-                      </option>
+                      <OtherLineChip
+                        active={selectedLine === line}
+                        info={lineCatalog[line]}
+                        key={line}
+                        line={line}
+                        onSelect={() => {
+                          setLineTouched(true);
+                          setSelectedLine(normalizeLine(line));
+                        }}
+                      />
                     ))}
-                  </select>
+                  </div>
                 ) : null}
               </section>
 
@@ -779,7 +798,7 @@ export function App() {
               ) : (
                 <ul className="entry-list">
                   {visibleEntries.map((entry) => (
-                    <EntryRow entry={entry} key={entry.clientEntryId} lineOptions={allLineOptions} onDelete={onDelete} onEditLeg={onEditLeg} onEditLine={onEditLine} onShowMap={setMapEntry} />
+                    <EntryRow entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} lineOptions={allLineOptions} onDelete={onDelete} onEditLeg={onEditLeg} onEditLine={onEditLine} onShowMap={setMapEntry} />
                   ))}
                 </ul>
               )}
@@ -1103,6 +1122,7 @@ function AuthGate({ authLoading, viewer, isOnline, priorAuthorized }: { authLoad
 
 function EntryRow({
   entry,
+  lineCatalog,
   lineOptions,
   onEditLeg,
   onEditLine,
@@ -1110,6 +1130,7 @@ function EntryRow({
   onDelete
 }: {
   entry: LocalEntry;
+  lineCatalog: Record<string, LineInfo>;
   lineOptions: string[];
   onEditLeg: (entry: LocalEntry, leg: string) => Promise<void>;
   onEditLine: (entry: LocalEntry, line: string) => Promise<void>;
@@ -1161,6 +1182,29 @@ function EntryRow({
         {entry.lastError ? " · " + entry.lastError : ""}
       </p>
     </li>
+  );
+}
+
+function OtherLineChip({ active, info, line, onSelect }: { active: boolean; info?: LineInfo; line: string; onSelect: () => void }) {
+  const color = info?.color ?? lineColor(line);
+  const foreground = info?.foreground ?? lineForeground(line);
+
+  return (
+    <button
+      className={active ? "other-line-chip active" : "other-line-chip"}
+      type="button"
+      role="radio"
+      aria-checked={active}
+      style={{
+        borderColor: color,
+        backgroundColor: active ? color : "var(--surface)",
+        color: active ? foreground : color
+      }}
+      onClick={onSelect}
+    >
+      <strong>{line}</strong>
+      <span>{info?.type ?? "TPG"}</span>
+    </button>
   );
 }
 
@@ -1783,12 +1827,14 @@ function useSmoothMapZoom(targetZoom: number) {
   return renderZoom;
 }
 
-function lineColor(line: string) {
-  return LINE_COLORS[line] ?? "#4a6fae";
+function lineColor(line: string, catalog: Record<string, LineInfo> = DEFAULT_LINE_CATALOG) {
+  const normalized = normalizeLine(line);
+  return catalog[normalized]?.color ?? LINE_COLORS[normalized] ?? "#4a6fae";
 }
 
-function lineForeground(line: string) {
-  return LINE_FOREGROUNDS[line] ?? "#ffffff";
+function lineForeground(line: string, catalog: Record<string, LineInfo> = DEFAULT_LINE_CATALOG) {
+  const normalized = normalizeLine(line);
+  return catalog[normalized]?.foreground ?? LINE_FOREGROUNDS[normalized] ?? "#ffffff";
 }
 
 function lineLabel(line: string) {
@@ -1797,7 +1843,7 @@ function lineLabel(line: string) {
     return "Manual";
   }
 
-  return LINE_LABELS[normalized as keyof typeof LINE_LABELS] ?? "Line " + normalized;
+  return "Line " + normalized;
 }
 
 function lineOptionsForEntry(lineOptions: string[], savedLine: string) {
@@ -1806,32 +1852,29 @@ function lineOptionsForEntry(lineOptions: string[], savedLine: string) {
   return options.includes(normalizedSavedLine) ? options : [normalizedSavedLine, ...options];
 }
 
-async function loadLineOptions(): Promise<string[]> {
+async function loadLineCatalog(): Promise<Record<string, LineInfo>> {
   const response = await fetch(CDN_LINE_DATA_URL, { cache: "force-cache" });
   if (!response.ok) {
     throw new Error("Line data HTTP " + response.status);
   }
 
   const data = await response.json();
-  const lines = new Set<string>(MAIN_LINE_VALUES);
+  const catalog: Record<string, LineInfo> = { ...DEFAULT_LINE_CATALOG };
 
-  for (const route of Array.isArray(data?.r) ? data.r : []) {
-    const line = normalizeLine(route?.l);
+  for (const entry of Array.isArray(data?.lines) ? data.lines : []) {
+    const line = normalizeLine(entry?.l);
     if (line !== "unclassified") {
-      lines.add(line);
+      catalog[line] = {
+        line,
+        color: normalizeHexColor(entry?.c) || lineColor(line),
+        foreground: normalizeHexColor(entry?.f) || lineForeground(line),
+        type: String(entry?.t ?? ""),
+        link: String(entry?.u ?? "")
+      };
     }
   }
 
-  for (const stop of Array.isArray(data?.s) ? data.s : []) {
-    for (const service of Array.isArray(stop?.v) ? stop.v : []) {
-      const line = normalizeLine(Array.isArray(service) ? service[0] : service?.line);
-      if (line !== "unclassified") {
-        lines.add(line);
-      }
-    }
-  }
-
-  return Array.from(lines).sort(compareTransitLines);
+  return catalog;
 }
 
 function compareTransitLines(a: string, b: string) {
@@ -1842,6 +1885,11 @@ function compareTransitLines(a: string, b: string) {
   }
 
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function normalizeHexColor(value: unknown) {
+  const color = String(value ?? "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : "";
 }
 
 function locationText(location: LocationState, classification: ReturnType<typeof classifyCapture>) {
@@ -2845,8 +2893,7 @@ h2 {
 }
 
 .vehicle-input,
-.entry-actions select,
-.other-line-select {
+.entry-actions select {
   width: 100%;
   min-height: 48px;
   border: 1px solid var(--border);
@@ -2869,8 +2916,7 @@ h2 {
 }
 
 .vehicle-input:focus,
-.entry-actions select:focus,
-.other-line-select:focus {
+.entry-actions select:focus {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
   border-color: var(--accent);
@@ -2997,10 +3043,45 @@ button:focus-visible {
   color: white;
 }
 
-.other-line-select {
-  padding: 0 14px;
-  font-size: 0.95rem;
-  font-weight: 620;
+.other-line-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 8px;
+}
+
+.other-line-chip {
+  min-height: 56px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  cursor: pointer;
+  padding: 7px 8px;
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.other-line-chip strong {
+  font-size: 1.02rem;
+  line-height: 1;
+}
+
+.other-line-chip span {
+  font-size: 0.68rem;
+  line-height: 1.15;
+  color: currentColor;
+  opacity: 0.78;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .primary-button {
@@ -3028,6 +3109,7 @@ button:focus-visible {
 .leg-option:hover,
 .line-swatch:hover,
 .other-line-button:hover,
+.other-line-chip:hover,
 .idea-row-footer button:hover,
 .entry-actions button:hover {
   background: var(--surface);

@@ -33,6 +33,8 @@ test("vehicle numbers must be 3 or 4 digits", async () => {
   assert.equal(normalizeObservationType("seen"), "seen");
   assert.equal(normalizeObservationType("unknown"), "been_on");
   assert.equal(normalizeLine("29"), "29");
+  assert.equal(normalizeLine("01"), "1");
+  assert.equal(normalizeLine("e+"), "E+");
   assert.equal(normalizeLine("too-long-line"), "unclassified");
 });
 
