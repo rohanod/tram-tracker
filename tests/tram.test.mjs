@@ -23,7 +23,7 @@ async function loadSyncModule() {
 }
 
 test("vehicle numbers must be 3 or 4 digits", async () => {
-  const { cleanVehicleNumber, isValidVehicleNumber, normalizeObservationType } = await loadSharedModule();
+  const { cleanVehicleNumber, isValidVehicleNumber, normalizeLine, normalizeObservationType } = await loadSharedModule();
 
   assert.equal(cleanVehicleNumber(" 867 "), "867");
   assert.equal(cleanVehicleNumber("1205"), "1205");
@@ -32,6 +32,8 @@ test("vehicle numbers must be 3 or 4 digits", async () => {
   assert.equal(isValidVehicleNumber("12a"), false);
   assert.equal(normalizeObservationType("seen"), "seen");
   assert.equal(normalizeObservationType("unknown"), "been_on");
+  assert.equal(normalizeLine("29"), "29");
+  assert.equal(normalizeLine("too-long-line"), "unclassified");
 });
 
 test("route classification applies Geneva noon rules", async () => {

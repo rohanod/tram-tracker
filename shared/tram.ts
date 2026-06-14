@@ -2,7 +2,8 @@ import { CORRIDORS, GENEVA_BOUNDS } from "./corridors";
 
 export const MATCH_RADIUS_METERS = 250;
 export const LEG_VALUES = ["unclassified", "from_home", "to_school", "from_school", "to_home"];
-export const LINE_VALUES = ["unclassified", "12", "14", "17", "18"];
+export const MAIN_LINE_VALUES = ["12", "14", "17", "18"];
+export const LINE_VALUES = ["unclassified", ...MAIN_LINE_VALUES];
 export const OBSERVATION_VALUES = ["been_on", "seen"];
 
 export const LEG_LABELS = {
@@ -48,12 +49,16 @@ export function normalizeLeg(value) {
 }
 
 export function isKnownLine(value) {
-  return LINE_VALUES.includes(value);
+  return normalizeLine(value) !== "unclassified";
 }
 
 export function normalizeLine(value) {
   const line = String(value ?? "").trim();
-  return isKnownLine(line) ? line : "unclassified";
+  if (line === "unclassified") {
+    return line;
+  }
+
+  return /^[A-Za-z0-9]{1,8}$/.test(line) ? line : "unclassified";
 }
 
 export function isKnownObservationType(value) {

@@ -2,7 +2,7 @@ import { SignInWithGoogle, signOut, useAuth, useMutation, useQuery } from "lakeb
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CORRIDORS, GENEVA_BOUNDS } from "../shared/corridors";
 import { isDeleteSettledResult } from "../shared/sync";
-import { classifyCapture, isValidVehicleNumber, LEG_LABELS, LINE_LABELS, LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
+import { classifyCapture, isValidVehicleNumber, LEG_LABELS, LINE_LABELS, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
 
 type Viewer = {
   isAllowed: boolean;
@@ -170,6 +170,13 @@ const LINE_COLORS: Record<string, string> = {
   "17": "#00ace7",
   "18": "#b82f89"
 };
+const LINE_FOREGROUNDS: Record<string, string> = {
+  "12": "#111111",
+  "14": "#ffffff",
+  "17": "#111111",
+  "18": "#ffffff"
+};
+const CDN_LINE_DATA_URL = "https://cdn.jsdelivr.net/gh/rohanod/tram-tracker@main/cdn/tpg-line-data-v1.json";
 const MAPLIBRE_SCRIPT_URL = "https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS_URL = "https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.css";
 const REVIEW_MAP_STYLE = {
@@ -229,6 +236,8 @@ export function App() {
   const [selectedLine, setSelectedLine] = useState("unclassified");
   const [legTouched, setLegTouched] = useState(false);
   const [lineTouched, setLineTouched] = useState(false);
+  const [showOtherLine, setShowOtherLine] = useState(false);
+  const [allLineOptions, setAllLineOptions] = useState<string[]>([...MAIN_LINE_VALUES]);
   const [location, setLocation] = useState<LocationState>({ status: "idle" });
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
   const [priorAuthorized, setPriorAuthorized] = useState(false);
@@ -254,6 +263,8 @@ export function App() {
   const currentPoint = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
   const currentClassification = useMemo(() => classifyCapture(currentPoint, nowIso), [currentPoint?.lat, currentPoint?.lon, nowIso]);
   const currentLegValues = useMemo(() => legValuesForCapturedAt(nowIso), [nowIso]);
+  const selectedLineIsMain = MAIN_LINE_VALUES.includes(selectedLine);
+  const otherLineOptions = useMemo(() => allLineOptions.filter((line) => !MAIN_LINE_VALUES.includes(line)), [allLineOptions]);
   const visibleEntries = useMemo(
     () => [...localEntries].filter((entry) => entry.syncStatus !== "delete_pending").sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)),
     [localEntries]
@@ -306,6 +317,10 @@ export function App() {
   useEffect(() => {
     const id = window.setInterval(() => setNowIso(new Date().toISOString()), 30000);
     return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    void loadLineOptions().then(setAllLineOptions).catch((err) => debugSync("line-options-load-failed", { error: errorMessage(err) }));
   }, []);
 
   useEffect(() => {
@@ -384,6 +399,7 @@ export function App() {
   useEffect(() => {
     if (!lineTouched) {
       setSelectedLine(currentClassification.suggestedLine);
+      setShowOtherLine(!MAIN_LINE_VALUES.includes(currentClassification.suggestedLine) && currentClassification.suggestedLine !== "unclassified");
     }
   }, [currentClassification.suggestedLine, lineTouched]);
 
@@ -596,98 +612,148 @@ export function App() {
         ) : (
           <>
             <form className="save-panel" onSubmit={(event) => void onSubmit(event)}>
-              <div className="field-row">
-                <label className="field-label" htmlFor="vehicle-number">
-                  Vehicle number
-                </label>
-                <input
-                  autoComplete="off"
-                  className="vehicle-input"
-                  id="vehicle-number"
-                  inputMode="numeric"
-                  maxLength={4}
-                  name="vehicle-number"
-                  pattern="[0-9]{3,4}"
-                  placeholder="867"
-                  value={vehicleNumber}
-                  onInput={(event) => setVehicleNumber(event.currentTarget.value.replace(/\D/g, "").slice(0, 4))}
-                />
-              </div>
-
-              <div>
-                <p className="field-label">Type</p>
-                <div className="observation-grid" role="radiogroup" aria-label="Observation type">
-                  {OBSERVATION_VALUES.map((value) => (
-                    <button
-                      className={observationType === value ? "observation-option active" : "observation-option"}
-                      key={value}
-                      type="button"
-                      role="radio"
-                      aria-checked={observationType === value}
-                      onClick={() => setObservationType(value)}
-                    >
-                      {OBSERVATION_LABELS[value as keyof typeof OBSERVATION_LABELS]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="inset-panel">
-                <div className="location-row">
-                  <div>
-                    <p className="field-label">Location default</p>
-                    <p className="subtle">{locationText(location, currentClassification)}</p>
+              <div className="capture-layout">
+                <section className="capture-card" aria-label="Vehicle capture">
+                  <div className="field-row">
+                    <label className="field-label" htmlFor="vehicle-number">
+                      Vehicle number
+                    </label>
+                    <input
+                      autoComplete="off"
+                      className="vehicle-input"
+                      id="vehicle-number"
+                      inputMode="numeric"
+                      maxLength={4}
+                      name="vehicle-number"
+                      pattern="[0-9]{3,4}"
+                      placeholder="867"
+                      value={vehicleNumber}
+                      onInput={(event) => setVehicleNumber(event.currentTarget.value.replace(/\D/g, "").slice(0, 4))}
+                    />
                   </div>
-                  <button className="secondary-button" type="button" onClick={() => requestLocation(setLocation)}>
-                    Refresh
-                  </button>
-                </div>
 
-                <div className="leg-grid" role="radiogroup" aria-label="Leg direction">
-                  {currentLegValues.map((leg) => (
-                    <button
-                      className={selectedLeg === leg ? "leg-option active" : "leg-option"}
-                      key={leg}
-                      type="button"
-                      role="radio"
-                      aria-checked={selectedLeg === leg}
-                      onClick={() => {
-                        setLegTouched(true);
-                        setSelectedLeg(leg);
-                      }}
-                    >
-                      {LEG_LABELS[leg as keyof typeof LEG_LABELS]}
+                  <div>
+                    <p className="field-label">Capture</p>
+                    <div className="observation-grid" role="radiogroup" aria-label="Observation type">
+                      {OBSERVATION_VALUES.map((value) => (
+                        <button
+                          className={observationType === value ? "observation-option active" : "observation-option"}
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={observationType === value}
+                          onClick={() => setObservationType(value)}
+                        >
+                          {OBSERVATION_LABELS[value as keyof typeof OBSERVATION_LABELS]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="default-card" aria-label="Location and leg default">
+                  <div className="location-row">
+                    <div>
+                      <p className="field-label">Default</p>
+                      <p className="subtle">{locationText(location, currentClassification)}</p>
+                    </div>
+                    <button className="secondary-button" type="button" onClick={() => requestLocation(setLocation)}>
+                      Refresh
                     </button>
-                  ))}
-                </div>
+                  </div>
 
-                <div>
-                  <p className="field-label">Line</p>
-                  <div className="line-grid" role="radiogroup" aria-label="Exact tram line">
-                    {LINE_VALUES.map((line) => (
+                  <div className="leg-grid" role="radiogroup" aria-label="Leg direction">
+                    {currentLegValues.map((leg) => (
                       <button
-                        className={selectedLine === line ? "line-option active" : "line-option"}
-                        key={line}
+                        className={selectedLeg === leg ? "leg-option active" : "leg-option"}
+                        key={leg}
                         type="button"
                         role="radio"
-                        aria-checked={selectedLine === line}
+                        aria-checked={selectedLeg === leg}
                         onClick={() => {
-                          setLineTouched(true);
-                          setSelectedLine(line);
+                          setLegTouched(true);
+                          setSelectedLeg(leg);
                         }}
                       >
-                        {LINE_LABELS[line as keyof typeof LINE_LABELS]}
+                        {LEG_LABELS[leg as keyof typeof LEG_LABELS]}
                       </button>
                     ))}
                   </div>
-                </div>
+                </section>
               </div>
+
+              <section className="line-panel" aria-label="Vehicle line">
+                <div className="section-heading compact">
+                  <div>
+                    <h2>Line</h2>
+                    <p className="subtle">Pick one of the main lines or choose another TPG line.</p>
+                  </div>
+                  <span>{lineLabel(selectedLine)}</span>
+                </div>
+
+                <div className="main-line-grid" role="radiogroup" aria-label="Main lines">
+                  {MAIN_LINE_VALUES.map((line) => {
+                    const active = selectedLine === line;
+                    return (
+                      <button
+                        className={active ? "line-swatch active" : "line-swatch"}
+                        key={line}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        style={{
+                          borderColor: lineColor(line),
+                          backgroundColor: active ? lineColor(line) : "var(--surface)",
+                          color: active ? lineForeground(line) : lineColor(line)
+                        }}
+                        onClick={() => {
+                          setLineTouched(true);
+                          setShowOtherLine(false);
+                          setSelectedLine(line);
+                        }}
+                      >
+                        {line}
+                      </button>
+                    );
+                  })}
+                  <button
+                    className={showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified") ? "other-line-button active" : "other-line-button"}
+                    type="button"
+                    aria-pressed={showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified")}
+                    onClick={() => {
+                      setLineTouched(true);
+                      setShowOtherLine(true);
+                    }}
+                  >
+                    Other
+                  </button>
+                </div>
+
+                {showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified") ? (
+                  <select
+                    className="other-line-select"
+                    aria-label="Choose another line"
+                    value={!selectedLineIsMain && selectedLine !== "unclassified" ? selectedLine : ""}
+                    onChange={(event) => {
+                      setLineTouched(true);
+                      setSelectedLine(normalizeLine(event.currentTarget.value));
+                    }}
+                  >
+                    <option value="">Choose line</option>
+                    {otherLineOptions.map((line) => (
+                      <option key={line} value={line}>
+                        {lineLabel(line)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </section>
 
               {error ? <p className="error-text">{error}</p> : null}
               {message ? <p className="message-text">{message}</p> : null}
 
               <button className="primary-button" type="submit">
-                Save vehicle
+                Save
               </button>
             </form>
 
@@ -713,7 +779,7 @@ export function App() {
               ) : (
                 <ul className="entry-list">
                   {visibleEntries.map((entry) => (
-                    <EntryRow entry={entry} key={entry.clientEntryId} onDelete={onDelete} onEditLeg={onEditLeg} onEditLine={onEditLine} onShowMap={setMapEntry} />
+                    <EntryRow entry={entry} key={entry.clientEntryId} lineOptions={allLineOptions} onDelete={onDelete} onEditLeg={onEditLeg} onEditLine={onEditLine} onShowMap={setMapEntry} />
                   ))}
                 </ul>
               )}
@@ -1037,12 +1103,14 @@ function AuthGate({ authLoading, viewer, isOnline, priorAuthorized }: { authLoad
 
 function EntryRow({
   entry,
+  lineOptions,
   onEditLeg,
   onEditLine,
   onShowMap,
   onDelete
 }: {
   entry: LocalEntry;
+  lineOptions: string[];
   onEditLeg: (entry: LocalEntry, leg: string) => Promise<void>;
   onEditLine: (entry: LocalEntry, line: string) => Promise<void>;
   onShowMap: (entry: LocalEntry) => void;
@@ -1072,9 +1140,9 @@ function EntryRow({
           ))}
         </select>
         <select value={savedLine} aria-label={"Line for vehicle " + entry.vehicleNumber} onChange={(event) => void onEditLine(entry, event.currentTarget.value)}>
-          {LINE_VALUES.map((line) => (
+          {lineOptionsForEntry(lineOptions, savedLine).map((line) => (
             <option key={line} value={line}>
-              {LINE_LABELS[line as keyof typeof LINE_LABELS]}
+              {lineLabel(line)}
             </option>
           ))}
         </select>
@@ -1211,7 +1279,7 @@ function SavedLocationDialog({ entry, onClose }: { entry: LocalEntry; onClose: (
           </div>
           <div>
             <dt>Line</dt>
-            <dd>{LINE_LABELS[normalizeLine(entry.savedLine) as keyof typeof LINE_LABELS]}</dd>
+            <dd>{lineLabel(entry.savedLine)}</dd>
           </div>
           <div>
             <dt>Coordinates</dt>
@@ -1719,6 +1787,63 @@ function lineColor(line: string) {
   return LINE_COLORS[line] ?? "#4a6fae";
 }
 
+function lineForeground(line: string) {
+  return LINE_FOREGROUNDS[line] ?? "#ffffff";
+}
+
+function lineLabel(line: string) {
+  const normalized = normalizeLine(line);
+  if (normalized === "unclassified") {
+    return "Manual";
+  }
+
+  return LINE_LABELS[normalized as keyof typeof LINE_LABELS] ?? "Line " + normalized;
+}
+
+function lineOptionsForEntry(lineOptions: string[], savedLine: string) {
+  const normalizedSavedLine = normalizeLine(savedLine);
+  const options = ["unclassified", ...lineOptions];
+  return options.includes(normalizedSavedLine) ? options : [normalizedSavedLine, ...options];
+}
+
+async function loadLineOptions(): Promise<string[]> {
+  const response = await fetch(CDN_LINE_DATA_URL, { cache: "force-cache" });
+  if (!response.ok) {
+    throw new Error("Line data HTTP " + response.status);
+  }
+
+  const data = await response.json();
+  const lines = new Set<string>(MAIN_LINE_VALUES);
+
+  for (const route of Array.isArray(data?.r) ? data.r : []) {
+    const line = normalizeLine(route?.l);
+    if (line !== "unclassified") {
+      lines.add(line);
+    }
+  }
+
+  for (const stop of Array.isArray(data?.s) ? data.s : []) {
+    for (const service of Array.isArray(stop?.v) ? stop.v : []) {
+      const line = normalizeLine(Array.isArray(service) ? service[0] : service?.line);
+      if (line !== "unclassified") {
+        lines.add(line);
+      }
+    }
+  }
+
+  return Array.from(lines).sort(compareTransitLines);
+}
+
+function compareTransitLines(a: string, b: string) {
+  const mainA = MAIN_LINE_VALUES.indexOf(a);
+  const mainB = MAIN_LINE_VALUES.indexOf(b);
+  if (mainA !== -1 || mainB !== -1) {
+    return (mainA === -1 ? 999 : mainA) - (mainB === -1 ? 999 : mainB);
+  }
+
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
 function locationText(location: LocationState, classification: ReturnType<typeof classifyCapture>) {
   if (location.status === "checking") {
     return "Checking current position.";
@@ -1733,13 +1858,13 @@ function locationText(location: LocationState, classification: ReturnType<typeof
     return "Location will be requested for route defaults.";
   }
   if (classification.status === "matched") {
-    return LEG_LABELS[classification.suggestedLeg as keyof typeof LEG_LABELS] + " on " + LINE_LABELS[classification.suggestedLine as keyof typeof LINE_LABELS] + " near " + classification.nearestStopName;
+    return LEG_LABELS[classification.suggestedLeg as keyof typeof LEG_LABELS] + " on " + lineLabel(classification.suggestedLine) + " near " + classification.nearestStopName;
   }
   if (classification.status === "ambiguous") {
     if (classification.suggestedLeg !== "unclassified") {
       return LEG_LABELS[classification.suggestedLeg as keyof typeof LEG_LABELS] + ". Choose the exact line.";
     }
-    return "Multiple route groups nearby. Choose manually.";
+    return "Choose the leg and line manually.";
   }
   if (classification.status === "outside_route") {
     return "Outside the configured corridors. Choose manually.";
@@ -2557,26 +2682,27 @@ async function writeMeta(key: string, value: string): Promise<void> {
 
 const APP_CSS = `
 :root {
-  --page: oklch(0.985 0.003 255);
-  --inset: oklch(0.967 0.004 255);
-  --surface: oklch(1 0 0);
-  --surface-raised: oklch(0.996 0.001 255);
-  --accent: oklch(0.47 0.115 259.6);
-  --accent-strong: oklch(0.39 0.12 259.6);
-  --accent-soft: oklch(0.94 0.018 259.8);
-  --school: oklch(0.48 0.105 166);
-  --school-soft: oklch(0.95 0.025 166);
+  --page: #ffffff;
+  --page-alt: #f7f7f7;
+  --inset: #f7f7f7;
+  --surface: #ffffff;
+  --surface-raised: #fbfbfb;
+  --accent: #000000;
+  --accent-strong: #2b2b2b;
+  --accent-soft: #f7f7f7;
   --line-12: #f5a300;
   --line-14: #5a1e82;
   --line-17: #00ace7;
   --line-18: #b82f89;
-  --text: oklch(0.18 0.006 255);
-  --text-secondary: oklch(0.36 0.008 255);
-  --text-muted: oklch(0.50 0.007 255);
-  --border: oklch(0.75 0.006 255 / 0.58);
-  --border-strong: oklch(0.63 0.01 255 / 0.7);
-  --danger: oklch(0.48 0.16 28);
-  --focus: oklch(0.514 0.101 259.6 / 0.24);
+  --text: #000000;
+  --text-strong: #000000bf;
+  --text-secondary: #0000008c;
+  --text-muted: #00000073;
+  --text-placeholder: #00000040;
+  --border: #0000001a;
+  --border-strong: #00000026;
+  --danger: #c03221;
+  --focus: #0000001a;
   color-scheme: light;
 }
 
@@ -2605,26 +2731,26 @@ input {
   background: var(--page);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  padding: 20px;
+  padding: 24px;
 }
 
 .utility {
-  width: min(100%, 720px);
+  width: min(100%, 880px);
   margin: 0 auto;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: 32px;
   background: var(--surface);
-  padding: 18px;
+  padding: 24px;
 }
 
 .topbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 20px;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 16px;
-  margin-bottom: 16px;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
 }
 
 h1,
@@ -2634,10 +2760,10 @@ p {
 }
 
 h1 {
-  font-size: 1.72rem;
+  font-size: 1.95rem;
   line-height: 1.1;
-  letter-spacing: -0.018em;
-  font-weight: 720;
+  letter-spacing: 0;
+  font-weight: 650;
 }
 
 h2 {
@@ -2663,7 +2789,7 @@ h2 {
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--surface-raised);
+  background: var(--inset);
   color: var(--text-secondary);
   font-size: 0.86rem;
   min-height: 34px;
@@ -2685,10 +2811,10 @@ h2 {
 .save-panel,
 .auth-panel,
 .history-panel {
-  background: var(--inset);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: 24px;
+  padding: 16px;
 }
 
 .save-panel {
@@ -2702,7 +2828,7 @@ h2 {
 }
 
 .history-panel {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .field-row {
@@ -2711,28 +2837,31 @@ h2 {
 }
 
 .field-label {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.74rem;
-  font-weight: 700;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .vehicle-input,
-.entry-actions select {
+.entry-actions select,
+.other-line-select {
   width: 100%;
   min-height: 48px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: var(--inset);
   color: var(--text);
   outline: none;
 }
 
 .vehicle-input {
-  min-height: 58px;
-  padding: 0 14px;
-  font-size: 1.9rem;
-  font-weight: 720;
-  letter-spacing: 0.02em;
+  min-height: 88px;
+  padding: 0 18px;
+  font-size: 2.55rem;
+  font-weight: 750;
+  letter-spacing: 0;
 }
 
 .vehicle-input::placeholder {
@@ -2740,7 +2869,8 @@ h2 {
 }
 
 .vehicle-input:focus,
-.entry-actions select:focus {
+.entry-actions select:focus,
+.other-line-select:focus {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
   border-color: var(--accent);
@@ -2751,13 +2881,22 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.inset-panel {
+.capture-layout {
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 12px;
+}
+
+.capture-card,
+.default-card,
+.line-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  padding: 12px;
+  border-radius: 24px;
+  background: var(--inset);
+  padding: 16px;
 }
 
 .location-row,
@@ -2769,7 +2908,12 @@ button:focus-visible {
 }
 
 .section-heading {
-  margin-bottom: 9px;
+  margin-bottom: 12px;
+}
+
+.section-heading.compact {
+  margin-bottom: 0;
+  align-items: flex-end;
 }
 
 .section-heading span {
@@ -2779,20 +2923,32 @@ button:focus-visible {
 
 .observation-grid,
 .leg-grid,
-.line-grid {
+.main-line-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(106px, 1fr));
-  gap: 6px;
+  gap: 8px;
+}
+
+.observation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.leg-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.main-line-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .observation-option,
 .leg-option,
-.line-option,
+.line-swatch,
+.other-line-button,
 .secondary-button,
 .link-button,
 .entry-actions button {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 16px;
   background: var(--surface);
   color: var(--text);
   min-height: 40px;
@@ -2802,9 +2958,8 @@ button:focus-visible {
 }
 
 .observation-option,
-.leg-option,
-.line-option {
-  min-height: 40px;
+.leg-option {
+  min-height: 44px;
   color: var(--text-secondary);
   font-size: 0.9rem;
   font-weight: 640;
@@ -2812,16 +2967,45 @@ button:focus-visible {
 
 .observation-option.active,
 .leg-option.active,
-.line-option.active,
 .primary-button {
   border-color: var(--accent);
   background: var(--accent);
   color: white;
 }
 
+.line-swatch {
+  min-height: 64px;
+  border-width: 2px;
+  font-size: 1.36rem;
+  font-weight: 820;
+}
+
+.line-swatch:not(.active) {
+  background: var(--surface);
+}
+
+.other-line-button {
+  min-height: 64px;
+  border-color: var(--border);
+  font-weight: 720;
+  color: var(--text-secondary);
+}
+
+.other-line-button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.other-line-select {
+  padding: 0 14px;
+  font-size: 0.95rem;
+  font-weight: 620;
+}
+
 .primary-button {
-  min-height: 50px;
-  border-radius: 10px;
+  min-height: 54px;
+  border-radius: 18px;
   border: 1px solid var(--accent);
   cursor: pointer;
   font-weight: 720;
@@ -2842,10 +3026,11 @@ button:focus-visible {
 .secondary-button:hover,
 .observation-option:hover,
 .leg-option:hover,
-.line-option:hover,
+.line-swatch:hover,
+.other-line-button:hover,
 .idea-row-footer button:hover,
 .entry-actions button:hover {
-  background: var(--surface-raised);
+  background: var(--surface);
   border-color: var(--border-strong);
   color: var(--text);
 }
@@ -2894,7 +3079,7 @@ button:disabled {
 
 .small-button {
   min-height: 32px;
-  border-radius: 8px;
+  border-radius: 12px;
   font-size: 0.8rem;
 }
 
@@ -2910,9 +3095,9 @@ button:disabled {
   display: grid;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 10px;
+  border-radius: 18px;
+  background: var(--inset);
+  padding: 12px;
 }
 
 .idea-row div:first-child,
@@ -2943,7 +3128,7 @@ button:disabled {
 .idea-row-footer button {
   min-height: 30px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--surface);
   color: var(--text-secondary);
   padding: 0 9px;
@@ -2955,7 +3140,7 @@ button:disabled {
   display: grid;
   gap: 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 14px;
+  border-radius: 24px;
   background: var(--surface);
   padding: 14px;
 }
@@ -2965,8 +3150,8 @@ button:disabled {
   resize: vertical;
   min-height: 140px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: var(--inset);
   color: var(--text);
   padding: 10px;
   line-height: 1.45;
@@ -2983,9 +3168,9 @@ button:disabled {
   display: grid;
   gap: 9px;
   border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--surface);
-  padding: 11px;
+  border-radius: 20px;
+  background: var(--inset);
+  padding: 12px;
 }
 
 .entry-row.deleting {
@@ -3007,7 +3192,7 @@ button:disabled {
 
 .entry-main strong {
   font-size: 1.4rem;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   line-height: 1;
 }
 
@@ -3025,7 +3210,7 @@ button:disabled {
 .entry-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 106px auto auto;
-  gap: 6px;
+  gap: 8px;
 }
 
 .entry-actions select {
@@ -3036,8 +3221,8 @@ button:disabled {
 
 .empty-state {
   border: 1px dashed var(--border);
-  border-radius: 11px;
-  background: var(--surface);
+  border-radius: 18px;
+  background: var(--inset);
   padding: 16px;
 }
 
@@ -3465,12 +3650,13 @@ button:disabled {
     border-left: 0;
     border-right: 0;
     min-height: 100vh;
-    padding: 14px;
+    padding: 16px;
   }
 
   .topbar,
   .entry-main,
-  .location-row {
+  .location-row,
+  .capture-layout {
     display: grid;
   }
 
@@ -3489,13 +3675,20 @@ button:disabled {
   }
 
   .vehicle-input {
-    min-height: 56px;
-    font-size: 1.75rem;
+    min-height: 76px;
+    font-size: 2.1rem;
   }
 
-  .leg-grid,
-  .line-grid {
+  .leg-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .main-line-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .other-line-button {
+    grid-column: 1 / -1;
   }
 
   .entry-main p {

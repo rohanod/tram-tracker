@@ -309,7 +309,11 @@ function normalizeLeg(value) {
 
 function normalizeLine(value) {
   const line = String(value ?? "").trim();
-  return line === "12" || line === "14" || line === "17" || line === "18" ? line : "unclassified";
+  if (line === "unclassified") {
+    return line;
+  }
+
+  return /^[A-Za-z0-9]{1,8}$/.test(line) ? line : "unclassified";
 }
 
 function normalizeObservationType(value) {
