@@ -65,10 +65,6 @@ export function normalizeObservationType(value) {
 }
 
 export function legValuesForCapturedAt(capturedAt) {
-  if (isGenevaWeekend(capturedAt)) {
-    return ["unclassified", "from_home", "to_school", "from_school", "to_home"];
-  }
-
   return isBeforeGenevaNoon(capturedAt)
     ? ["unclassified", "from_home", "to_school"]
     : ["unclassified", "from_school", "to_home"];
@@ -184,10 +180,6 @@ function baseClassification(status) {
 }
 
 function legForRouteAndTime(routeGroup, capturedAt) {
-  if (isGenevaWeekend(capturedAt)) {
-    return "unclassified";
-  }
-
   const beforeNoon = isBeforeGenevaNoon(capturedAt);
 
   if (routeGroup === "home_14_18") {
@@ -199,20 +191,6 @@ function legForRouteAndTime(routeGroup, capturedAt) {
   }
 
   return "unclassified";
-}
-
-function isGenevaWeekend(capturedAt) {
-  const date = new Date(capturedAt);
-  if (Number.isNaN(date.getTime())) {
-    return false;
-  }
-
-  const weekday = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Zurich",
-    weekday: "short"
-  }).format(date);
-
-  return weekday === "Sat" || weekday === "Sun";
 }
 
 function uniqueValues(values) {

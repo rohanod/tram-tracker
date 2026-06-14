@@ -56,13 +56,13 @@ test("route classification applies Geneva noon rules", async () => {
   assert.equal(schoolAfter.suggestedLeg, "from_school");
 });
 
-test("weekend captures default to no leg while preserving route match", async () => {
+test("weekend captures keep the normal route and time defaults", async () => {
   const { classifyCapture, legValuesForCapturedAt } = await loadSharedModule();
 
   const saturday = classifyCapture({ lat: 46.22204, lon: 6.097272 }, "2026-06-13T07:30:00.000Z");
   assert.equal(saturday.routeGroup, "home_14_18");
-  assert.equal(saturday.suggestedLeg, "unclassified");
-  assert.deepEqual(legValuesForCapturedAt("2026-06-13T07:30:00.000Z"), ["unclassified", "from_home", "to_school", "from_school", "to_home"]);
+  assert.equal(saturday.suggestedLeg, "from_home");
+  assert.deepEqual(legValuesForCapturedAt("2026-06-13T07:30:00.000Z"), ["unclassified", "from_home", "to_school"]);
 });
 
 test("line classification is exact only when one configured line matches", async () => {
