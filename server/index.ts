@@ -9,6 +9,7 @@ export default capsule({
     tripEntries: table({
       clientEntryId: string(),
       vehicleNumber: string(),
+      observationType: string(),
       capturedAt: string(),
       savedAt: string(),
       lat: string(),
@@ -22,6 +23,13 @@ export default capsule({
       routeGroup: string(),
       distanceMeters: string(),
       nearestStopName: string(),
+      ownerId: string()
+    }),
+    featureIdeas: table({
+      clientIdeaId: string(),
+      body: string(),
+      capturedAt: string(),
+      savedAt: string(),
       ownerId: string()
     })
   },
@@ -39,6 +47,19 @@ export default capsule({
         .where("ownerId", viewer.userId)
         .orderBy("capturedAt", "desc")
         .limit(80)
+        .all();
+    }),
+
+    featureIdeas: query((ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) {
+        return [];
+      }
+
+      return ctx.db.featureIdeas
+        .where("ownerId", viewer.userId)
+        .orderBy("capturedAt", "desc")
+        .limit(40)
         .all();
     })
   },
@@ -71,6 +92,7 @@ export default capsule({
       const row = {
         clientEntryId,
         vehicleNumber,
+        observationType: normalizeObservationType(input?.observationType),
         capturedAt,
         savedAt,
         lat: location ? roundCoordinate(location.lat) : "",
@@ -98,6 +120,46 @@ export default capsule({
       }
 
       const inserted = ctx.db.tripEntries.insert(row);
+      return { ok: true, id: inserted?.id ?? "" };
+    }),
+
+    saveFeatureIdea: mutation((ctx, input) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) {
+        return { ok: false, reason: "unauthorized" };
+      }
+
+      const clientIdeaId = cleanBounded(input?.clientIdeaId, 80);
+      if (!clientIdeaId) {
+        return { ok: false, reason: "missing_client_idea_id" };
+      }
+
+      const body = cleanBounded(input?.body, 1000);
+      if (!body) {
+        return { ok: false, reason: "missing_idea" };
+      }
+
+      const capturedAt = normalizeIsoDate(input?.capturedAt);
+      const savedAt = normalizeIsoDate(input?.savedAt || input?.capturedAt);
+      const row = {
+        clientIdeaId,
+        body,
+        capturedAt,
+        savedAt,
+        ownerId: viewer.userId
+      };
+
+      const existing = ctx.db.featureIdeas
+        .where("clientIdeaId", clientIdeaId)
+        .all()
+        .find((idea) => idea.ownerId === viewer.userId);
+
+      if (existing) {
+        ctx.db.featureIdeas.update(existing.id, row);
+        return { ok: true, id: existing.id };
+      }
+
+      const inserted = ctx.db.featureIdeas.insert(row);
       return { ok: true, id: inserted?.id ?? "" };
     }),
 
@@ -151,6 +213,28 @@ export default capsule({
 
       ctx.db.tripEntries.delete(entry.id);
       return { ok: true, id: entry.id };
+    }),
+
+    deleteFeatureIdea: mutation((ctx, id) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) {
+        return { ok: false, reason: "unauthorized" };
+      }
+
+      const idOrClientIdeaId = String(id ?? "");
+      const idea =
+        ctx.db.featureIdeas.get(idOrClientIdeaId) ||
+        ctx.db.featureIdeas
+          .where("clientIdeaId", idOrClientIdeaId)
+          .all()
+          .find((candidate) => candidate.ownerId === viewer.userId);
+
+      if (!idea || idea.ownerId !== viewer.userId) {
+        return { ok: false, reason: "not_found" };
+      }
+
+      ctx.db.featureIdeas.delete(idea.id);
+      return { ok: true, id: idea.id };
     })
   },
 
@@ -226,6 +310,11 @@ function normalizeLeg(value) {
 function normalizeLine(value) {
   const line = String(value ?? "").trim();
   return line === "12" || line === "14" || line === "17" || line === "18" ? line : "unclassified";
+}
+
+function normalizeObservationType(value) {
+  const observationType = String(value ?? "").trim();
+  return observationType === "seen" ? "seen" : "been_on";
 }
 
 function roundCoordinate(value) {

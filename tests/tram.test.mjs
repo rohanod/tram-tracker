@@ -23,13 +23,15 @@ async function loadSyncModule() {
 }
 
 test("vehicle numbers must be 3 or 4 digits", async () => {
-  const { cleanVehicleNumber, isValidVehicleNumber } = await loadSharedModule();
+  const { cleanVehicleNumber, isValidVehicleNumber, normalizeObservationType } = await loadSharedModule();
 
   assert.equal(cleanVehicleNumber(" 867 "), "867");
   assert.equal(cleanVehicleNumber("1205"), "1205");
   assert.equal(isValidVehicleNumber("12"), false);
   assert.equal(isValidVehicleNumber("12345"), false);
   assert.equal(isValidVehicleNumber("12a"), false);
+  assert.equal(normalizeObservationType("seen"), "seen");
+  assert.equal(normalizeObservationType("unknown"), "been_on");
 });
 
 test("route classification applies Geneva noon rules", async () => {
@@ -52,6 +54,15 @@ test("route classification applies Geneva noon rules", async () => {
 
   const schoolAfter = classifyCapture({ lat: 46.199524, lon: 6.17492 }, "2026-06-11T12:30:00.000Z");
   assert.equal(schoolAfter.suggestedLeg, "from_school");
+});
+
+test("weekend captures default to no leg while preserving route match", async () => {
+  const { classifyCapture, legValuesForCapturedAt } = await loadSharedModule();
+
+  const saturday = classifyCapture({ lat: 46.22204, lon: 6.097272 }, "2026-06-13T07:30:00.000Z");
+  assert.equal(saturday.routeGroup, "home_14_18");
+  assert.equal(saturday.suggestedLeg, "unclassified");
+  assert.deepEqual(legValuesForCapturedAt("2026-06-13T07:30:00.000Z"), ["unclassified", "from_home", "to_school", "from_school", "to_home"]);
 });
 
 test("line classification is exact only when one configured line matches", async () => {

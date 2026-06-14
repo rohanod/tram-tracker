@@ -3,9 +3,10 @@ import { CORRIDORS, GENEVA_BOUNDS } from "./corridors";
 export const MATCH_RADIUS_METERS = 250;
 export const LEG_VALUES = ["unclassified", "from_home", "to_school", "from_school", "to_home"];
 export const LINE_VALUES = ["unclassified", "12", "14", "17", "18"];
+export const OBSERVATION_VALUES = ["been_on", "seen"];
 
 export const LEG_LABELS = {
-  unclassified: "Manual",
+  unclassified: "No leg",
   from_home: "From home",
   to_school: "To school",
   from_school: "From school",
@@ -18,6 +19,11 @@ export const LINE_LABELS = {
   "14": "Line 14",
   "17": "Line 17",
   "18": "Line 18"
+};
+
+export const OBSERVATION_LABELS = {
+  been_on: "Been on",
+  seen: "Seen"
 };
 
 export function cleanVehicleNumber(value) {
@@ -50,7 +56,19 @@ export function normalizeLine(value) {
   return isKnownLine(line) ? line : "unclassified";
 }
 
+export function isKnownObservationType(value) {
+  return OBSERVATION_VALUES.includes(value);
+}
+
+export function normalizeObservationType(value) {
+  return isKnownObservationType(value) ? value : "been_on";
+}
+
 export function legValuesForCapturedAt(capturedAt) {
+  if (isGenevaWeekend(capturedAt)) {
+    return ["unclassified", "from_home", "to_school", "from_school", "to_home"];
+  }
+
   return isBeforeGenevaNoon(capturedAt)
     ? ["unclassified", "from_home", "to_school"]
     : ["unclassified", "from_school", "to_home"];
@@ -166,6 +184,10 @@ function baseClassification(status) {
 }
 
 function legForRouteAndTime(routeGroup, capturedAt) {
+  if (isGenevaWeekend(capturedAt)) {
+    return "unclassified";
+  }
+
   const beforeNoon = isBeforeGenevaNoon(capturedAt);
 
   if (routeGroup === "home_14_18") {
@@ -177,6 +199,20 @@ function legForRouteAndTime(routeGroup, capturedAt) {
   }
 
   return "unclassified";
+}
+
+function isGenevaWeekend(capturedAt) {
+  const date = new Date(capturedAt);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const weekday = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Zurich",
+    weekday: "short"
+  }).format(date);
+
+  return weekday === "Sat" || weekday === "Sun";
 }
 
 function uniqueValues(values) {

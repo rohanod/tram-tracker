@@ -2,7 +2,7 @@ import { SignInWithGoogle, signOut, useAuth, useMutation, useQuery } from "lakeb
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CORRIDORS, GENEVA_BOUNDS } from "../shared/corridors";
 import { isDeleteSettledResult } from "../shared/sync";
-import { classifyCapture, isValidVehicleNumber, LEG_LABELS, LINE_LABELS, LINE_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
+import { classifyCapture, isValidVehicleNumber, LEG_LABELS, LINE_LABELS, LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
 
 type Viewer = {
   isAllowed: boolean;
@@ -18,6 +18,7 @@ type ServerEntry = {
   id: string;
   clientEntryId: string;
   vehicleNumber: string;
+  observationType: string;
   capturedAt: string;
   savedAt: string;
   lat: string;
@@ -39,6 +40,7 @@ type LocalEntry = {
   clientEntryId: string;
   serverId: string;
   vehicleNumber: string;
+  observationType: string;
   capturedAt: string;
   savedAt: string;
   lat: string;
@@ -53,6 +55,27 @@ type LocalEntry = {
   distanceMeters: string;
   nearestStopName: string;
   syncStatus: "pending" | "synced" | "failed" | "delete_pending";
+  lastError: string;
+  updatedAt: string;
+};
+
+type ServerFeatureIdea = {
+  id: string;
+  clientIdeaId: string;
+  body: string;
+  capturedAt: string;
+  savedAt: string;
+  ownerId: string;
+  updatedAt: string;
+};
+
+type LocalFeatureIdea = {
+  clientIdeaId: string;
+  serverId: string;
+  body: string;
+  capturedAt: string;
+  savedAt: string;
+  syncStatus: "pending" | "synced" | "failed";
   lastError: string;
   updatedAt: string;
 };
@@ -126,8 +149,9 @@ declare global {
 }
 
 const DB_NAME = "tram-vehicle-saver";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const ENTRY_STORE = "entries";
+const IDEA_STORE = "featureIdeas";
 const META_STORE = "meta";
 const SYNC_STORE = "syncQueue";
 const PRIOR_AUTH_KEY = "priorAuthorized";
@@ -193,10 +217,14 @@ export function App() {
   const auth = useAuth();
   const viewer = useQuery<Viewer>("viewer") as Viewer | undefined;
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
+  const serverFeatureIdeas = (useQuery<ServerFeatureIdea[]>("featureIdeas") as ServerFeatureIdea[] | undefined) ?? [];
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
+  const saveFeatureIdea = useMutation<[idea: LocalFeatureIdea], MutationResult>("saveFeatureIdea");
+  const deleteFeatureIdea = useMutation<[id: string], MutationResult>("deleteFeatureIdea");
 
   const [vehicleNumber, setVehicleNumber] = useState("");
+  const [observationType, setObservationType] = useState("been_on");
   const [selectedLeg, setSelectedLeg] = useState("unclassified");
   const [selectedLine, setSelectedLine] = useState("unclassified");
   const [legTouched, setLegTouched] = useState(false);
@@ -209,7 +237,10 @@ export function App() {
   const [isOnline, setIsOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [syncing, setSyncing] = useState(false);
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
+  const [localIdeas, setLocalIdeas] = useState<LocalFeatureIdea[]>([]);
   const [syncKick, setSyncKick] = useState(0);
+  const [ideaDialogOpen, setIdeaDialogOpen] = useState(false);
+  const [ideaBody, setIdeaBody] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [nowIso, setNowIso] = useState(new Date().toISOString());
@@ -227,6 +258,8 @@ export function App() {
     () => [...localEntries].filter((entry) => entry.syncStatus !== "delete_pending").sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)),
     [localEntries]
   );
+  const visibleIdeas = useMemo(() => [...localIdeas].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)), [localIdeas]);
+  const pendingIdeaCount = useMemo(() => localIdeas.filter((idea) => idea.syncStatus !== "synced").length, [localIdeas]);
 
   useEffect(() => {
     installPwaAssets();
@@ -238,6 +271,7 @@ export function App() {
     void migrateLegacyDeletePendingEntries()
       .then(() => wakeFailedSyncOperations())
       .then(() => refreshLocalState(setLocalEntries, setPendingOperationCount))
+      .then(() => refreshLocalIdeas(setLocalIdeas))
       .catch((err) => debugSync("startup-local-state-error", { error: errorMessage(err) }));
     void readMeta(PRIOR_AUTH_KEY).then((value) => {
       const nextPriorAuthorized = value === "true";
@@ -362,32 +396,42 @@ export function App() {
   }, [viewer?.isAllowed, serverEntries.map((entry) => [entry.id, entry.clientEntryId, entry.savedLeg, entry.savedLine, entry.savedAt, entry.updatedAt].join(":")).join("|")]);
 
   useEffect(() => {
-    if (!viewer?.isAllowed || !isOnline || syncInFlight.current) {
+    if (!viewer?.isAllowed || serverFeatureIdeas.length === 0) {
+      return;
+    }
+
+    void mergeServerFeatureIdeas(serverFeatureIdeas).then(() => refreshLocalIdeas(setLocalIdeas));
+  }, [viewer?.isAllowed, serverFeatureIdeas.map((idea) => [idea.id, idea.clientIdeaId, idea.body, idea.savedAt, idea.updatedAt].join(":")).join("|")]);
+
+  useEffect(() => {
+    if (!viewer?.isAllowed || !isOnline || syncInFlight.current || (pendingOperationCount === 0 && pendingIdeaCount === 0)) {
       return;
     }
 
     void syncPendingEntries({
       saveEntry,
       deleteEntry,
+      saveFeatureIdea,
       setLocalEntries,
+      setLocalIdeas,
       setPendingOperationCount,
       setSyncing,
       setMessage,
       syncInFlight
     });
-  }, [viewer?.isAllowed, isOnline, pendingOperationCount, syncKick]);
+  }, [viewer?.isAllowed, isOnline, pendingOperationCount, pendingIdeaCount, syncKick]);
 
   useEffect(() => {
-    if (!viewer?.isAllowed || !isOnline || pendingOperationCount === 0) {
+    if (!viewer?.isAllowed || !isOnline || (pendingOperationCount === 0 && pendingIdeaCount === 0)) {
       return;
     }
 
     const id = window.setInterval(() => {
-      debugSync("sync-retry-timer", { pendingOperationCount });
+      debugSync("sync-retry-timer", { pendingOperationCount, pendingIdeaCount });
       setSyncKick((value) => value + 1);
     }, 15000);
     return () => window.clearInterval(id);
-  }, [viewer?.isAllowed, isOnline, pendingOperationCount]);
+  }, [viewer?.isAllowed, isOnline, pendingOperationCount, pendingIdeaCount]);
 
   async function onSubmit(event: SubmitEvent) {
     event.preventDefault();
@@ -416,6 +460,7 @@ export function App() {
       clientEntryId: createClientEntryId(),
       serverId: "",
       vehicleNumber: cleanNumber,
+      observationType: normalizeObservationType(observationType),
       capturedAt,
       savedAt,
       lat: point ? point.lat.toFixed(4) : "",
@@ -444,6 +489,52 @@ export function App() {
     setSelectedLine(classification.suggestedLine);
     setMessage(isOnline && viewer?.isAllowed ? "Saved locally. Syncing now." : "Saved on this device. It will sync when online.");
     setSyncKick((value) => value + 1);
+  }
+
+  async function onSaveIdea(event: SubmitEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    const body = ideaBody.trim();
+    if (!canUseSaver) {
+      setError("Sign in with the allowed Google account before saving ideas.");
+      return;
+    }
+    if (!body) {
+      setError("Write the idea before saving it.");
+      return;
+    }
+
+    const capturedAt = new Date().toISOString();
+    const idea: LocalFeatureIdea = {
+      clientIdeaId: createClientIdeaId(),
+      serverId: "",
+      body: body.slice(0, 1000),
+      capturedAt,
+      savedAt: capturedAt,
+      syncStatus: "pending",
+      lastError: "",
+      updatedAt: capturedAt
+    };
+
+    await putLocalIdea(idea);
+    await refreshLocalIdeas(setLocalIdeas);
+    setIdeaBody("");
+    setIdeaDialogOpen(false);
+    setMessage(isOnline && viewer?.isAllowed ? "Idea saved locally. Syncing now." : "Idea saved on this device. It will sync when online.");
+    setSyncKick((value) => value + 1);
+  }
+
+  async function onDeleteIdea(idea: LocalFeatureIdea) {
+    await removeLocalIdea(idea.clientIdeaId);
+    if (viewer?.isAllowed && isOnline && idea.serverId) {
+      const result = await deleteFeatureIdea(idea.serverId);
+      if (!result?.ok && result?.reason !== "not_found") {
+        setError("Idea was removed locally, but the server delete will need a retry.");
+      }
+    }
+    await refreshLocalIdeas(setLocalIdeas);
   }
 
   async function onEditLeg(entry: LocalEntry, leg: string) {
@@ -523,6 +614,24 @@ export function App() {
                 />
               </div>
 
+              <div>
+                <p className="field-label">Type</p>
+                <div className="observation-grid" role="radiogroup" aria-label="Observation type">
+                  {OBSERVATION_VALUES.map((value) => (
+                    <button
+                      className={observationType === value ? "observation-option active" : "observation-option"}
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={observationType === value}
+                      onClick={() => setObservationType(value)}
+                    >
+                      {OBSERVATION_LABELS[value as keyof typeof OBSERVATION_LABELS]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="inset-panel">
                 <div className="location-row">
                   <div>
@@ -585,8 +694,20 @@ export function App() {
             <section className="history-panel" aria-label="Recent saved entries">
               <div className="section-heading">
                 <h2>Recent saves</h2>
-                <span>{historySummaryText(visibleEntries.length, pendingOperationCount, syncing)}</span>
+                <div className="heading-actions">
+                  <span>{historySummaryText(visibleEntries.length, pendingOperationCount + pendingIdeaCount, syncing)}</span>
+                  <button className="secondary-button small-button" type="button" onClick={() => setIdeaDialogOpen(true)}>
+                    Idea
+                  </button>
+                </div>
               </div>
+              {visibleIdeas.length > 0 ? (
+                <ul className="idea-list" aria-label="Feature ideas">
+                  {visibleIdeas.map((idea) => (
+                    <FeatureIdeaRow idea={idea} key={idea.clientIdeaId} onDelete={onDeleteIdea} />
+                  ))}
+                </ul>
+              ) : null}
               {visibleEntries.length === 0 ? (
                 <p className="empty-state">Saved vehicle entries will appear here for review.</p>
               ) : (
@@ -598,6 +719,9 @@ export function App() {
               )}
             </section>
             {mapEntry ? <SavedLocationDialog entry={mapEntry} onClose={() => setMapEntry(null)} /> : null}
+            {ideaDialogOpen ? (
+              <FeatureIdeaDialog body={ideaBody} setBody={setIdeaBody} onClose={() => setIdeaDialogOpen(false)} onSubmit={onSaveIdea} />
+            ) : null}
           </>
         )}
       </section>
@@ -747,7 +871,11 @@ function debugSync(event: string, payload: Record<string, unknown> = {}) {
 }
 
 function isDebugLoggingEnabled() {
-  if (typeof console === "undefined" || typeof localStorage === "undefined") {
+  if (typeof console === "undefined" || typeof localStorage === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+
+  if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
     return false;
   }
 
@@ -922,6 +1050,7 @@ function EntryRow({
 }) {
   const savedLeg = normalizeLeg(entry.savedLeg);
   const savedLine = normalizeLine(entry.savedLine);
+  const observation = normalizeObservationType(entry.observationType);
   const legOptions = legOptionsForEntry(entry, savedLeg);
   const hasSavedLocation = Boolean(entry.lat && entry.lon && Number.isFinite(Number(entry.lat)) && Number.isFinite(Number(entry.lon)));
 
@@ -930,7 +1059,7 @@ function EntryRow({
       <div className="entry-main">
         <div>
           <strong>{entry.vehicleNumber}</strong>
-          <span>Saved {formatEntryDate(savedTimeForEntry(entry))}</span>
+          <span>{OBSERVATION_LABELS[observation as keyof typeof OBSERVATION_LABELS]} · Saved {formatEntryDate(savedTimeForEntry(entry))}</span>
         </div>
         <p>{entry.nearestStopName || statusLabel(entry.classificationStatus)}</p>
       </div>
@@ -964,6 +1093,80 @@ function EntryRow({
         {entry.lastError ? " · " + entry.lastError : ""}
       </p>
     </li>
+  );
+}
+
+function FeatureIdeaRow({ idea, onDelete }: { idea: LocalFeatureIdea; onDelete: (idea: LocalFeatureIdea) => Promise<void> }) {
+  return (
+    <li className="idea-row">
+      <div>
+        <strong>Idea</strong>
+        <span>Saved {formatEntryDate(idea.savedAt || idea.capturedAt)}</span>
+      </div>
+      <p>{idea.body}</p>
+      <div className="idea-row-footer">
+        <span>
+          {syncLabel(idea.syncStatus)}
+          {idea.lastError ? " · " + idea.lastError : ""}
+        </span>
+        <button type="button" onClick={() => void onDelete(idea)}>
+          Delete
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function FeatureIdeaDialog({
+  body,
+  setBody,
+  onClose,
+  onSubmit
+}: {
+  body: string;
+  setBody: (body: string) => void;
+  onClose: () => void;
+  onSubmit: (event: SubmitEvent) => Promise<void>;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form className="idea-dialog" role="dialog" aria-modal="true" aria-labelledby="idea-dialog-title" onSubmit={(event) => void onSubmit(event)} onClick={(event) => event.stopPropagation()}>
+        <div className="map-dialog-header">
+          <div>
+            <h2 id="idea-dialog-title">Save feature idea</h2>
+            <p className="subtle">Quick note for later coding.</p>
+          </div>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <label className="field-row" htmlFor="feature-idea">
+          <span className="field-label">Idea</span>
+          <textarea
+            autoFocus
+            className="idea-textarea"
+            id="feature-idea"
+            maxLength={1000}
+            rows={5}
+            value={body}
+            onInput={(event) => setBody(event.currentTarget.value)}
+          />
+        </label>
+        <button className="primary-button" type="submit">
+          Save idea
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -1658,7 +1861,9 @@ function installPwaAssets() {
 async function syncPendingEntries(args: {
   saveEntry: (entry: LocalEntry) => Promise<MutationResult>;
   deleteEntry: (id: string) => Promise<MutationResult>;
+  saveFeatureIdea: (idea: LocalFeatureIdea) => Promise<MutationResult>;
   setLocalEntries: (entries: LocalEntry[]) => void;
+  setLocalIdeas: (ideas: LocalFeatureIdea[]) => void;
   setPendingOperationCount: (count: number) => void;
   setSyncing: (value: boolean) => void;
   setMessage: (value: string) => void;
@@ -1695,11 +1900,16 @@ async function syncPendingEntries(args: {
       failed += result === "failed" ? 1 : 0;
     }
 
+    const ideaResult = await syncPendingFeatureIdeas(args.saveFeatureIdea);
+    completed += ideaResult.completed;
+    failed += ideaResult.failed;
+
     if (completed > 0 || failed > 0) {
       args.setMessage(failed > 0 ? "Some changes did not sync. They will retry." : "Sync updated.");
     }
 
     await refreshLocalState(args.setLocalEntries, args.setPendingOperationCount);
+    await refreshLocalIdeas(args.setLocalIdeas);
     debugSync("sync-finish", {
       completed,
       failed,
@@ -1709,6 +1919,41 @@ async function syncPendingEntries(args: {
     args.setSyncing(false);
     args.syncInFlight.current = false;
   }
+}
+
+async function syncPendingFeatureIdeas(saveFeatureIdea: (idea: LocalFeatureIdea) => Promise<MutationResult>) {
+  const ideas = await getLocalIdeas();
+  let completed = 0;
+  let failed = 0;
+
+  for (const idea of ideas) {
+    if (idea.syncStatus === "synced") {
+      continue;
+    }
+
+    try {
+      const result = await saveFeatureIdea(idea);
+      if (result?.ok) {
+        await putLocalIdea({
+          ...idea,
+          serverId: result.id ?? idea.serverId,
+          syncStatus: "synced",
+          lastError: "",
+          updatedAt: new Date().toISOString()
+        });
+        completed += 1;
+        continue;
+      }
+
+      await putLocalIdea({ ...idea, syncStatus: "failed", lastError: result?.reason ?? "idea sync failed", updatedAt: new Date().toISOString() });
+      failed += 1;
+    } catch (err) {
+      await putLocalIdea({ ...idea, syncStatus: "failed", lastError: errorMessage(err), updatedAt: new Date().toISOString() });
+      failed += 1;
+    }
+  }
+
+  return { completed, failed };
 }
 
 async function mergeServerEntries(serverEntries: ServerEntry[]) {
@@ -1735,6 +1980,7 @@ async function mergeServerEntries(serverEntries: ServerEntry[]) {
       clientEntryId: serverEntry.clientEntryId,
       serverId: serverEntry.id,
       vehicleNumber: serverEntry.vehicleNumber,
+      observationType: normalizeObservationType(serverEntry.observationType),
       capturedAt: serverEntry.capturedAt,
       savedAt: serverEntry.savedAt || serverEntry.capturedAt,
       lat: serverEntry.lat,
@@ -1751,6 +1997,29 @@ async function mergeServerEntries(serverEntries: ServerEntry[]) {
       syncStatus: "synced",
       lastError: "",
       updatedAt: serverEntry.updatedAt || serverEntry.capturedAt || new Date().toISOString()
+    });
+  }
+}
+
+async function mergeServerFeatureIdeas(serverFeatureIdeas: ServerFeatureIdea[]) {
+  const localIdeas = await getLocalIdeas();
+  const localByClientId = new Map(localIdeas.map((idea) => [idea.clientIdeaId, idea]));
+
+  for (const serverIdea of serverFeatureIdeas) {
+    const existing = localByClientId.get(serverIdea.clientIdeaId);
+    if (existing && existing.syncStatus !== "synced") {
+      continue;
+    }
+
+    await putLocalIdea({
+      clientIdeaId: serverIdea.clientIdeaId,
+      serverId: serverIdea.id,
+      body: serverIdea.body,
+      capturedAt: serverIdea.capturedAt,
+      savedAt: serverIdea.savedAt || serverIdea.capturedAt,
+      syncStatus: "synced",
+      lastError: "",
+      updatedAt: serverIdea.updatedAt || serverIdea.capturedAt || new Date().toISOString()
     });
   }
 }
@@ -1844,12 +2113,24 @@ async function refreshLocalState(setLocalEntries: (entries: LocalEntry[]) => voi
   setPendingOperationCount(operations.length);
 }
 
+async function refreshLocalIdeas(setLocalIdeas: (ideas: LocalFeatureIdea[]) => void) {
+  setLocalIdeas(await getLocalIdeas());
+}
+
 function createClientEntryId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
 
   return "entry-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+}
+
+function createClientIdeaId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return "idea-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 }
 
 function openLocalDb(): Promise<IDBDatabase> {
@@ -1859,6 +2140,9 @@ function openLocalDb(): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(ENTRY_STORE)) {
         db.createObjectStore(ENTRY_STORE, { keyPath: "clientEntryId" });
+      }
+      if (!db.objectStoreNames.contains(IDEA_STORE)) {
+        db.createObjectStore(IDEA_STORE, { keyPath: "clientIdeaId" });
       }
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: "key" });
@@ -1917,7 +2201,7 @@ async function getLocalEntries(): Promise<LocalEntry[]> {
     };
     request.onsuccess = () => {
       db.close();
-      resolve(request.result as LocalEntry[]);
+      resolve((request.result as LocalEntry[]).map(normalizeLocalEntry));
     };
   });
 }
@@ -1932,7 +2216,7 @@ async function getLocalEntry(clientEntryId: string): Promise<LocalEntry | null> 
     };
     request.onsuccess = () => {
       db.close();
-      resolve((request.result as LocalEntry | undefined) ?? null);
+      resolve(request.result ? normalizeLocalEntry(request.result as LocalEntry) : null);
     };
   });
 }
@@ -1940,7 +2224,7 @@ async function getLocalEntry(clientEntryId: string): Promise<LocalEntry | null> 
 async function putLocalEntry(entry: LocalEntry): Promise<void> {
   const db = await openLocalDb();
   return new Promise((resolve, reject) => {
-    const request = db.transaction(ENTRY_STORE, "readwrite").objectStore(ENTRY_STORE).put(entry);
+    const request = db.transaction(ENTRY_STORE, "readwrite").objectStore(ENTRY_STORE).put(normalizeLocalEntry(entry));
     request.onerror = () => {
       db.close();
       reject(request.error);
@@ -1965,6 +2249,78 @@ async function removeLocalEntry(clientEntryId: string): Promise<void> {
       resolve();
     };
   });
+}
+
+async function getLocalIdeas(): Promise<LocalFeatureIdea[]> {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(IDEA_STORE, "readonly").objectStore(IDEA_STORE).getAll();
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    request.onsuccess = () => {
+      db.close();
+      resolve((request.result as LocalFeatureIdea[]).map(normalizeLocalIdea));
+    };
+  });
+}
+
+async function putLocalIdea(idea: LocalFeatureIdea): Promise<void> {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(IDEA_STORE, "readwrite").objectStore(IDEA_STORE).put(normalizeLocalIdea(idea));
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    request.onsuccess = () => {
+      db.close();
+      resolve();
+    };
+  });
+}
+
+async function removeLocalIdea(clientIdeaId: string): Promise<void> {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(IDEA_STORE, "readwrite").objectStore(IDEA_STORE).delete(clientIdeaId);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    request.onsuccess = () => {
+      db.close();
+      resolve();
+    };
+  });
+}
+
+function normalizeLocalEntry(entry: LocalEntry): LocalEntry {
+  return {
+    ...entry,
+    observationType: normalizeObservationType(entry.observationType),
+    savedAt: entry.savedAt || entry.capturedAt,
+    savedLeg: normalizeLeg(entry.savedLeg),
+    savedLine: normalizeLine(entry.savedLine),
+    inferredLine: normalizeLine(entry.inferredLine),
+    syncStatus: entry.syncStatus ?? "synced",
+    lastError: entry.lastError ?? "",
+    updatedAt: entry.updatedAt || entry.capturedAt || new Date().toISOString()
+  };
+}
+
+function normalizeLocalIdea(idea: LocalFeatureIdea): LocalFeatureIdea {
+  return {
+    clientIdeaId: idea.clientIdeaId,
+    serverId: idea.serverId || "",
+    body: String(idea.body ?? "").trim().slice(0, 1000),
+    capturedAt: idea.capturedAt || new Date().toISOString(),
+    savedAt: idea.savedAt || idea.capturedAt || new Date().toISOString(),
+    syncStatus: idea.syncStatus ?? "pending",
+    lastError: idea.lastError ?? "",
+    updatedAt: idea.updatedAt || idea.capturedAt || new Date().toISOString()
+  };
 }
 
 async function enqueueUpsertOperation(entry: LocalEntry): Promise<void> {
@@ -2384,10 +2740,15 @@ h2 {
 }
 
 .vehicle-input:focus,
-.entry-actions select:focus,
-button:focus-visible {
-  box-shadow: 0 0 0 3px var(--focus);
+.entry-actions select:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
   border-color: var(--accent);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .inset-panel {
@@ -2416,6 +2777,7 @@ button:focus-visible {
   font-size: 0.8rem;
 }
 
+.observation-grid,
 .leg-grid,
 .line-grid {
   display: grid;
@@ -2423,6 +2785,7 @@ button:focus-visible {
   gap: 6px;
 }
 
+.observation-option,
 .leg-option,
 .line-option,
 .secondary-button,
@@ -2438,6 +2801,7 @@ button:focus-visible {
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
+.observation-option,
 .leg-option,
 .line-option {
   min-height: 40px;
@@ -2446,6 +2810,7 @@ button:focus-visible {
   font-weight: 640;
 }
 
+.observation-option.active,
 .leg-option.active,
 .line-option.active,
 .primary-button {
@@ -2475,11 +2840,14 @@ button:focus-visible {
 }
 
 .secondary-button:hover,
+.observation-option:hover,
 .leg-option:hover,
 .line-option:hover,
+.idea-row-footer button:hover,
 .entry-actions button:hover {
-  background: var(--accent-soft);
-  border-color: oklch(0.68 0.04 259.6);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 button:disabled {
@@ -2516,6 +2884,99 @@ button:disabled {
   gap: 7px;
   margin: 0;
   padding: 0;
+}
+
+.heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.small-button {
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+.idea-list {
+  list-style: none;
+  display: grid;
+  gap: 7px;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.idea-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.idea-row div:first-child,
+.idea-row-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.idea-row strong {
+  font-size: 0.9rem;
+}
+
+.idea-row span,
+.idea-row-footer span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.idea-row p {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.idea-row-footer button {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.idea-dialog {
+  width: min(100%, 520px);
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.idea-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.idea-textarea:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--accent);
 }
 
 .entry-row {
@@ -2691,7 +3152,7 @@ button:disabled {
 }
 
 .map-mode-toggle button:hover {
-  background: var(--accent-soft);
+  background: var(--surface-raised);
 }
 
 .map-mode-toggle button.active {
@@ -2806,7 +3267,7 @@ button:disabled {
 }
 
 .map-controls button:hover {
-  background: var(--accent-soft);
+  background: var(--surface-raised);
 }
 
 .map-controls span {
@@ -2849,11 +3310,11 @@ button:disabled {
 }
 
 .mapcn-controls button:hover {
-  background: var(--accent-soft);
+  background: var(--surface-raised);
 }
 
 .mapcn-controls button:focus-visible {
-  outline: 3px solid oklch(0.514 0.101 259.6 / 0.25);
+  outline: 2px solid var(--focus);
   outline-offset: -3px;
 }
 
@@ -2891,13 +3352,11 @@ button:disabled {
 .mapcn-marker-pulse {
   background: oklch(0.514 0.101 259.6 / 0.18);
   border: 2px solid oklch(1 0 0 / 0.78);
-  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .mapcn-marker-dot {
   inset: 7px;
   background: var(--accent);
-  box-shadow: 0 0 0 3px oklch(1 0 0 / 0.78);
 }
 
 .mapcn-popup {
@@ -2908,7 +3367,6 @@ button:disabled {
   padding: 8px 10px;
   font-size: 0.84rem;
   font-weight: 650;
-  box-shadow: 0 8px 14px oklch(0 0 0 / 0.11);
 }
 
 .maplibregl-popup-content {
