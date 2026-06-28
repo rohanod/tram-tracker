@@ -1,4 +1,4 @@
-# Tram Vehicle Saver
+# Vehicle Tracker
 
 Language for the private tram vehicle history context.
 
@@ -35,3 +35,7 @@ _Avoid_: Draft, unsaved
 **Pending Delete**:
 A deletion request stored on the client's device after the Trip Entry has been removed locally, waiting to remove or confirm absence of the matching database entry.
 _Avoid_: Deleted Trip Entry, hidden row
+
+**Shortcut Save**:
+A token-authorized API save from a location-based automation, usually passing vehicle number, capture location, line, leg, and capture type.
+_Avoid_: Public save, webhook

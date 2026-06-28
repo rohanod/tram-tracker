@@ -1,4 +1,15 @@
-import { capsule, endpoint, mutation, query, string, table, text } from "lakebed/server";
+import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
+import {
+  classifyCapture,
+  isValidVehicleNumber,
+  normalizeLeg,
+  normalizeLine,
+  normalizeLocation,
+  normalizeObservationType,
+  normalizeVehicleNumber,
+  roundCoordinate,
+  vehicleHistoryMessage
+} from "../shared/tram";
 
 const APP_NAME = "tram-tracker";
 
@@ -24,13 +35,6 @@ export default capsule({
       distanceMeters: string(),
       nearestStopName: string(),
       ownerId: string()
-    }),
-    featureIdeas: table({
-      clientIdeaId: string(),
-      body: string(),
-      capturedAt: string(),
-      savedAt: string(),
-      ownerId: string()
     })
   },
 
@@ -43,24 +47,9 @@ export default capsule({
         return [];
       }
 
-      return ctx.db.tripEntries
-        .where("ownerId", viewer.userId)
-        .orderBy("capturedAt", "desc")
-        .limit(80)
-        .all();
-    }),
-
-    featureIdeas: query((ctx) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) {
-        return [];
-      }
-
-      return ctx.db.featureIdeas
-        .where("ownerId", viewer.userId)
-        .orderBy("capturedAt", "desc")
-        .limit(40)
-        .all();
+      return rowsForOwners(ctx.db.tripEntries, ownerIdsFor(ctx, viewer))
+        .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)))
+        .slice(0, 80);
     })
   },
 
@@ -71,95 +60,22 @@ export default capsule({
         return { ok: false, reason: "unauthorized" };
       }
 
-      const vehicleNumber = normalizeVehicleNumber(input?.vehicleNumber);
-      if (!isValidVehicleNumber(vehicleNumber)) {
-        return { ok: false, reason: "invalid_vehicle_number" };
+      const prepared = prepareEntryRow(ctx, input, primaryOwnerIdFor(ctx, viewer));
+      if (!prepared.ok) {
+        return prepared;
       }
-
-      const clientEntryId = cleanBounded(input?.clientEntryId, 80);
-      if (!clientEntryId) {
-        return { ok: false, reason: "missing_client_entry_id" };
-      }
-
-      const capturedAt = normalizeIsoDate(input?.capturedAt);
-      const savedAt = normalizeIsoDate(input?.savedAt || input?.capturedAt);
-      const location = locationFromInput(input);
-      const locationStatus = cleanBounded(input?.locationStatus, 48) || (location ? "captured" : "unavailable");
-      const inferredLeg = normalizeLeg(input?.inferredLeg);
-      const savedLeg = normalizeLeg(input?.savedLeg || inferredLeg);
-      const inferredLine = normalizeLine(input?.inferredLine);
-      const savedLine = normalizeLine(input?.savedLine || inferredLine);
-      const row = {
-        clientEntryId,
-        vehicleNumber,
-        observationType: normalizeObservationType(input?.observationType),
-        capturedAt,
-        savedAt,
-        lat: location ? roundCoordinate(location.lat) : "",
-        lon: location ? roundCoordinate(location.lon) : "",
-        locationStatus,
-        classificationStatus: cleanBounded(input?.classificationStatus, 48) || "unclassified",
-        inferredLeg,
-        savedLeg,
-        inferredLine,
-        savedLine,
-        routeGroup: cleanBounded(input?.routeGroup, 48) || "none",
-        distanceMeters: cleanBounded(input?.distanceMeters, 24),
-        nearestStopName: cleanBounded(input?.nearestStopName, 120),
-        ownerId: viewer.userId
-      };
 
       const existing = ctx.db.tripEntries
-        .where("clientEntryId", clientEntryId)
+        .where("clientEntryId", prepared.clientEntryId)
         .all()
-        .find((entry) => entry.ownerId === viewer.userId);
+        .find((entry) => ownsRow(ctx, viewer, entry));
 
       if (existing) {
-        ctx.db.tripEntries.update(existing.id, row);
+        ctx.db.tripEntries.update(existing.id, prepared.row);
         return { ok: true, id: existing.id };
       }
 
-      const inserted = ctx.db.tripEntries.insert(row);
-      return { ok: true, id: inserted?.id ?? "" };
-    }),
-
-    saveFeatureIdea: mutation((ctx, input) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) {
-        return { ok: false, reason: "unauthorized" };
-      }
-
-      const clientIdeaId = cleanBounded(input?.clientIdeaId, 80);
-      if (!clientIdeaId) {
-        return { ok: false, reason: "missing_client_idea_id" };
-      }
-
-      const body = cleanBounded(input?.body, 1000);
-      if (!body) {
-        return { ok: false, reason: "missing_idea" };
-      }
-
-      const capturedAt = normalizeIsoDate(input?.capturedAt);
-      const savedAt = normalizeIsoDate(input?.savedAt || input?.capturedAt);
-      const row = {
-        clientIdeaId,
-        body,
-        capturedAt,
-        savedAt,
-        ownerId: viewer.userId
-      };
-
-      const existing = ctx.db.featureIdeas
-        .where("clientIdeaId", clientIdeaId)
-        .all()
-        .find((idea) => idea.ownerId === viewer.userId);
-
-      if (existing) {
-        ctx.db.featureIdeas.update(existing.id, row);
-        return { ok: true, id: existing.id };
-      }
-
-      const inserted = ctx.db.featureIdeas.insert(row);
+      const inserted = ctx.db.tripEntries.insert(prepared.row);
       return { ok: true, id: inserted?.id ?? "" };
     }),
 
@@ -170,7 +86,7 @@ export default capsule({
       }
 
       const entry = ctx.db.tripEntries.get(String(id ?? ""));
-      if (!entry || entry.ownerId !== viewer.userId) {
+      if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
@@ -185,7 +101,7 @@ export default capsule({
       }
 
       const entry = ctx.db.tripEntries.get(String(id ?? ""));
-      if (!entry || entry.ownerId !== viewer.userId) {
+      if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
@@ -205,36 +121,14 @@ export default capsule({
         ctx.db.tripEntries
           .where("clientEntryId", idOrClientEntryId)
           .all()
-          .find((candidate) => candidate.ownerId === viewer.userId);
+          .find((candidate) => ownsRow(ctx, viewer, candidate));
 
-      if (!entry || entry.ownerId !== viewer.userId) {
+      if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
       ctx.db.tripEntries.delete(entry.id);
       return { ok: true, id: entry.id };
-    }),
-
-    deleteFeatureIdea: mutation((ctx, id) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) {
-        return { ok: false, reason: "unauthorized" };
-      }
-
-      const idOrClientIdeaId = String(id ?? "");
-      const idea =
-        ctx.db.featureIdeas.get(idOrClientIdeaId) ||
-        ctx.db.featureIdeas
-          .where("clientIdeaId", idOrClientIdeaId)
-          .all()
-          .find((candidate) => candidate.ownerId === viewer.userId);
-
-      if (!idea || idea.ownerId !== viewer.userId) {
-        return { ok: false, reason: "not_found" };
-      }
-
-      ctx.db.featureIdeas.delete(idea.id);
-      return { ok: true, id: idea.id };
     })
   },
 
@@ -264,7 +158,17 @@ export default capsule({
           "Cache-Control": "public, max-age=86400"
         }
       })
-    )
+    ),
+
+    shortcutSaveGet: endpoint({ method: "GET", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
+
+    shortcutSavePost: endpoint({ method: "POST", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
+
+    shortcutLookupGet: endpoint({ method: "GET", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
+
+    shortcutLookupPost: endpoint({ method: "POST", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
+
+    apiEntryPost: endpoint({ method: "POST", path: "/api/entries" }, (ctx, req) => saveShortcutEntry(ctx, req))
   }
 });
 
@@ -285,53 +189,261 @@ function viewerFor(ctx) {
   };
 }
 
+function ownerKeyFor(ctx) {
+  const allowedEmail = String(ctx.env.ALLOWED_EMAIL ?? "").trim().toLowerCase();
+  return allowedEmail ? "allowed:" + allowedEmail : "";
+}
+
+function primaryOwnerIdFor(ctx, viewer) {
+  return ownerKeyFor(ctx) || String(viewer?.userId ?? "");
+}
+
+function ownerIdsFor(ctx, viewer) {
+  const ids = [ownerKeyFor(ctx), String(viewer?.userId ?? "")].filter(Boolean);
+  return Array.from(new Set(ids));
+}
+
+function ownsRow(ctx, viewer, row) {
+  return Boolean(row && ownerIdsFor(ctx, viewer).includes(String(row.ownerId ?? "")));
+}
+
+function rowsForOwners(tableRef, ownerIds) {
+  const seen = new Set();
+  const rows = [];
+
+  for (const ownerId of ownerIds) {
+    for (const row of tableRef.where("ownerId", ownerId).all()) {
+      const id = String(row.id ?? row.clientEntryId ?? "");
+      if (seen.has(id)) {
+        continue;
+      }
+
+      seen.add(id);
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
+function prepareEntryRow(ctx, input, ownerId) {
+  const vehicleNumber = normalizeVehicleNumber(input?.vehicleNumber ?? input?.vehicle ?? input?.number);
+  if (!isValidVehicleNumber(vehicleNumber)) {
+    return { ok: false, reason: "invalid_vehicle_number" };
+  }
+
+  const clientEntryId = cleanBounded(input?.clientEntryId, 80);
+  if (!clientEntryId) {
+    return { ok: false, reason: "missing_client_entry_id" };
+  }
+
+  if (!ownerId) {
+    return { ok: false, reason: "missing_owner" };
+  }
+
+  const capturedAt = normalizeIsoDate(input?.capturedAt ?? input?.time ?? input?.datetime ?? input?.date);
+  const savedAt = normalizeIsoDate(input?.savedAt || capturedAt);
+  const location = locationFromInput(input);
+  const point = location ? normalizeLocation(location) : null;
+  const classification = classifyCapture(point, capturedAt);
+  const locationStatus = cleanBounded(input?.locationStatus, 48) || (point ? "captured" : "unavailable");
+  const inferredLeg = normalizeLeg(input?.inferredLeg || classification.suggestedLeg);
+  const savedLeg = normalizeSavedLegOverride(input?.savedLeg ?? input?.leg, inferredLeg);
+  const inferredLine = normalizeLine(input?.inferredLine || classification.suggestedLine);
+  const savedLine = normalizeLine(input?.savedLine || input?.line || inferredLine);
+
+  return {
+    ok: true,
+    clientEntryId,
+    classification,
+    row: {
+      clientEntryId,
+      vehicleNumber,
+      observationType: normalizeObservationType(input?.observationType ?? input?.type),
+      capturedAt,
+      savedAt,
+      lat: point ? roundCoordinate(point.lat) : "",
+      lon: point ? roundCoordinate(point.lon) : "",
+      locationStatus,
+      classificationStatus: cleanBounded(input?.classificationStatus, 48) || classification.status,
+      inferredLeg,
+      savedLeg,
+      inferredLine,
+      savedLine,
+      routeGroup: cleanBounded(input?.routeGroup, 48) || classification.routeGroup || "none",
+      distanceMeters: cleanBounded(input?.distanceMeters, 24) || String(classification.distanceMeters ?? ""),
+      nearestStopName: cleanBounded(input?.nearestStopName, 120) || String(classification.nearestStopName ?? ""),
+      ownerId
+    }
+  };
+}
+
+async function saveShortcutEntry(ctx, req) {
+  const auth = shortcutAuthorization(ctx, req);
+  if (!auth.ok) {
+    return json({ ok: false, reason: auth.reason }, jsonOptions(auth.status));
+  }
+
+  const ownerId = ownerKeyFor(ctx);
+  if (!ownerId) {
+    return json({ ok: false, reason: "allowed_email_missing" }, jsonOptions(503));
+  }
+
+  const rawInput = await inputFromRequest(req);
+  const input = {
+    ...rawInput,
+    clientEntryId: cleanBounded(rawInput.clientEntryId, 80) || createShortcutEntryId()
+  };
+  const prepared = prepareEntryRow(ctx, input, ownerId);
+  if (!prepared.ok) {
+    return json({ ok: false, reason: prepared.reason }, jsonOptions(400));
+  }
+  const priorEntry = latestVehicleEntry(ctx, ownerId, prepared.row.vehicleNumber, prepared.clientEntryId);
+
+  const existing = ctx.db.tripEntries
+    .where("clientEntryId", prepared.clientEntryId)
+    .all()
+    .find((entry) => entry.ownerId === ownerId);
+
+  if (existing) {
+    ctx.db.tripEntries.update(existing.id, prepared.row);
+    return json(shortcutEntryResponse(existing.id, prepared, priorEntry), jsonOptions(200));
+  }
+
+  const inserted = ctx.db.tripEntries.insert(prepared.row);
+  return json(shortcutEntryResponse(inserted?.id ?? "", prepared, priorEntry), jsonOptions(201));
+}
+
+async function lookupShortcutEntry(ctx, req) {
+  const auth = shortcutAuthorization(ctx, req);
+  if (!auth.ok) {
+    return json({ ok: false, reason: auth.reason, message: "" }, jsonOptions(auth.status));
+  }
+
+  const ownerId = ownerKeyFor(ctx);
+  if (!ownerId) {
+    return json({ ok: false, reason: "allowed_email_missing", message: "" }, jsonOptions(503));
+  }
+
+  const input = await inputFromRequest(req);
+  const vehicleNumber = normalizeVehicleNumber(input?.vehicleNumber ?? input?.vehicle ?? input?.number);
+  if (!vehicleNumber) {
+    return json({ ok: false, reason: "invalid_vehicle_number", message: "" }, jsonOptions(400));
+  }
+
+  return json(
+    {
+      ok: true,
+      vehicleNumber,
+      message: vehicleHistoryMessage(latestVehicleEntry(ctx, ownerId, vehicleNumber, ""))
+    },
+    jsonOptions(200)
+  );
+}
+
+function shortcutAuthorization(ctx, req) {
+  const expected = cleanBounded(ctx.env.SHORTCUT_TOKEN, 300);
+  if (!expected) {
+    return { ok: false, reason: "shortcut_token_missing", status: 503 };
+  }
+
+  const authHeader = String(req.headers.get("authorization") ?? "");
+  const bearerToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  const token = bearerToken || String(req.headers.get("x-tram-token") ?? "").trim() || String(req.query.get("token") ?? "").trim();
+
+  if (token !== expected) {
+    return { ok: false, reason: "unauthorized", status: 401 };
+  }
+
+  return { ok: true, reason: "", status: 200 };
+}
+
+async function inputFromRequest(req) {
+  const queryInput = Object.fromEntries(req.query.entries());
+  if (req.method === "GET") {
+    return queryInput;
+  }
+
+  const bodyText = (await req.text()).trim();
+  if (!bodyText) {
+    return queryInput;
+  }
+
+  const contentType = String(req.headers.get("content-type") ?? "");
+  const bodyInput = contentType.includes("application/x-www-form-urlencoded")
+    ? Object.fromEntries(new URLSearchParams(bodyText).entries())
+    : parseJsonObject(bodyText);
+
+  return { ...queryInput, ...bodyInput };
+}
+
+function parseJsonObject(bodyText) {
+  try {
+    const value = JSON.parse(bodyText);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function shortcutEntryResponse(id, prepared, priorEntry) {
+  const row = prepared.row;
+  return {
+    ok: true,
+    id,
+    clientEntryId: row.clientEntryId,
+    vehicleNumber: row.vehicleNumber,
+    observationType: row.observationType,
+    capturedAt: row.capturedAt,
+    savedAt: row.savedAt,
+    savedLeg: row.savedLeg,
+    savedLine: row.savedLine,
+    classificationStatus: row.classificationStatus,
+    routeGroup: row.routeGroup,
+    distanceMeters: row.distanceMeters,
+    nearestStopName: row.nearestStopName,
+    lat: row.lat,
+    lon: row.lon,
+    message: vehicleHistoryMessage(priorEntry)
+  };
+}
+
+function latestVehicleEntry(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
+  return ctx.db.tripEntries
+    .where("ownerId", ownerId)
+    .all()
+    .filter(
+      (entry) =>
+        String(entry.vehicleNumber ?? "") === vehicleNumber &&
+        String(entry.clientEntryId ?? "") !== String(excludedClientEntryId ?? "")
+    )
+    .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)))[0];
+}
+
+function jsonOptions(status) {
+  return {
+    status,
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  };
+}
+
+function createShortcutEntryId() {
+  return "shortcut-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 function cleanBounded(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
-function cleanVehicleNumber(value) {
-  return String(value ?? "").trim();
-}
-
-function isValidVehicleNumber(value) {
-  return /^\d{3,4}$/.test(cleanVehicleNumber(value));
-}
-
-function normalizeVehicleNumber(value) {
-  const clean = cleanVehicleNumber(value);
-  return isValidVehicleNumber(clean) ? clean : "";
-}
-
-function normalizeLeg(value) {
-  const leg = String(value ?? "").trim();
-  return leg === "from_home" || leg === "to_school" || leg === "from_school" || leg === "to_home" ? leg : "unclassified";
-}
-
-function normalizeLine(value) {
-  const rawLine = String(value ?? "").trim();
-  if (rawLine === "unclassified") {
-    return rawLine;
+function normalizeSavedLegOverride(value, inferredLeg) {
+  const leg = String(value ?? "").trim().toLowerCase();
+  if (!leg || leg === "auto" || leg === "detect" || leg === "detected") {
+    return normalizeLeg(inferredLeg);
   }
 
-  const line = rawLine.toUpperCase();
-  if (/^\d+$/.test(line)) {
-    return String(Number(line));
-  }
-
-  return /^[A-Za-z0-9+]{1,8}$/.test(line) ? line : "unclassified";
-}
-
-function normalizeObservationType(value) {
-  const observationType = String(value ?? "").trim();
-  return observationType === "seen" ? "seen" : "been_on";
-}
-
-function roundCoordinate(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "";
-  }
-
-  return (Math.round(value * 10000) / 10000).toFixed(4);
+  return normalizeLeg(leg);
 }
 
 function normalizeIsoDate(value) {
@@ -340,8 +452,14 @@ function normalizeIsoDate(value) {
 }
 
 function locationFromInput(input) {
-  const lat = Number(input?.lat);
-  const lon = Number(input?.lon);
+  const rawLat = input?.lat ?? input?.latitude;
+  const rawLon = input?.lon ?? input?.lng ?? input?.longitude;
+  if (String(rawLat ?? "").trim() === "" || String(rawLon ?? "").trim() === "") {
+    return null;
+  }
+
+  const lat = Number(rawLat);
+  const lon = Number(rawLon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return null;
   }
@@ -349,8 +467,8 @@ function locationFromInput(input) {
 }
 
 const MANIFEST = {
-  name: "Tram Vehicle Saver",
-  short_name: "Tram Saver",
+  name: "Vehicle Tracker",
+  short_name: "Vehicle Tracker",
   description: "A private saver for tram vehicle numbers.",
   id: "/",
   start_url: "/",
@@ -421,7 +539,7 @@ self.addEventListener(NETWORK_EVENT, (event) => {
 `;
 
 const PWA_ICON_SOURCE = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tram Saver">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Vehicle Tracker">
   <rect width="512" height="512" rx="96" fill="#ffffff"/>
   <rect x="80" y="96" width="352" height="280" rx="44" fill="#eef3fb" stroke="#4367a1" stroke-width="18"/>
   <path d="M144 190h224M146 266h220" stroke="#4367a1" stroke-width="28" stroke-linecap="round"/>

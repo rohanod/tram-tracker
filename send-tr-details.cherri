@@ -1,0 +1,66 @@
+#include 'actions/web'
+#include 'actions/location'
+#include 'actions/calendar'
+#include 'actions/text'
+
+#define color orange
+#define glyph tram
+
+#question token "What is your API token?" ""
+
+action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
+    "WFInputType": "Number",
+    "WFAskActionAllowsDecimalNumbers": false,
+    "WFAskActionAllowsNegativeNumbers": false
+}
+
+const shortcutToken = text(token)
+const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/save"
+
+const lineChoices = list("12", "14", "17", "18", "unclassified")
+const typeChoices = list("been_on", "seen")
+const legChoices = list("auto", "from_home", "to_school", "from_school", "to_home", "unclassified")
+
+@vehicleNumber = promptWholeNumber("Vehicle number")
+@vehicleNumberRemainder = @vehicleNumber % 1
+
+repeat attempt for 10 {
+    if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0 {
+        alert("Vehicle number must be a 3 or 4 digit whole number.", "Invalid vehicle number")
+        @vehicleNumber = promptWholeNumber("Vehicle number")
+        @vehicleNumberRemainder = @vehicleNumber % 1
+    }
+}
+
+if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0 {
+    alert("Vehicle number must be a 3 or 4 digit whole number.", "Invalid vehicle number")
+    stop()
+}
+const line = chooseFromList(lineChoices, "Line")
+const observationType = chooseFromList(typeChoices, "Observation type")
+const leg = chooseFromList(legChoices, "Leg")
+
+const now = currentDate()
+const capturedAt = formatTimestamp(now, "Custom", "None", "yyyy-MM-dd'T'HH:mm:ssXXX")
+const location = getCurrentLocation()
+const lat = getLocationDetail(location, "Latitude")
+const lon = getLocationDetail(location, "Longitude")
+
+const response = jsonRequest(apiURL, "POST", {
+    "vehicleNumber": "{@vehicleNumber}",
+    "line": "{line}",
+    "type": "{observationType}",
+    "leg": "{leg}",
+    "capturedAt": "{capturedAt}",
+    "lat": "{lat}",
+    "lon": "{lon}"
+}, {
+    "Authorization": "Bearer {shortcutToken}",
+    "Accept": "application/json"
+})
+
+const rawHistoryMessage = getValue(response, "message")
+const historyMessage = getText(rawHistoryMessage)
+if historyMessage != "" {
+    show("{historyMessage}")
+}

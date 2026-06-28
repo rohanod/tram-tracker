@@ -10,7 +10,7 @@ One private user saving tram vehicle numbers quickly, usually on a phone while n
 
 ## Product Purpose
 
-Tram Vehicle Saver records a private history of tram vehicle observations. Success means the user can enter a 3-4 digit vehicle number, get a useful route-leg default from current location and time of day, save it locally and remotely, and still keep working when the installed app is offline.
+Vehicle Tracker records a private history of tram vehicle observations. Success means the user can enter a 3-4 digit vehicle number, get a useful route-leg default from current location and time of day, save it locally and remotely, and still keep working when the installed app is offline.
 
 ## Brand Personality
 
@@ -27,6 +27,7 @@ Avoid marketing pages, achievement systems, charts, decorative transit illustrat
 - Local trust: device storage is a first-class save target, not just a visual cache.
 - Privacy by default: require the allowlisted Google account before exposing or syncing data.
 - Utility over decoration: use restrained surfaces, clear controls, and compact review rows.
+- Automation-friendly: support a token-protected shortcut API and URL prefill for location-based capture flows.
 
 ## Accessibility & Inclusion
 

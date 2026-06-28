@@ -1,0 +1,438 @@
+openapi: 3.1.0
+info:
+  title: Vehicle Tracker API
+  version: 1.0.0
+  description: Token-protected API for saving tram vehicle observations from automation shortcuts.
+servers:
+  - url: https://rapid-signal-1f4a040df6.lakebed.app
+    description: Lakebed production app
+paths:
+  /api/entries:
+    post:
+      operationId: saveTripEntry
+      summary: Save a trip entry
+      description: "Saves or updates a tram vehicle observation. Provide `clientEntryId` for idempotent retries."
+      security:
+        - ShortcutToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveEntryRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SaveEntryRequest"
+      responses:
+        "200":
+          description: Existing entry updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "201":
+          description: New entry created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "400":
+          description: Invalid request data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/shortcut/save:
+    get:
+      operationId: saveTripEntryFromQuery
+      summary: Save a trip entry from query parameters
+      description: "Convenience endpoint for URL-based automation shortcuts. Prefer bearer auth over the `token` query parameter when the shortcut client supports headers."
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+        - $ref: "#/components/parameters/ClientEntryIdQuery"
+        - $ref: "#/components/parameters/VehicleNumberQuery"
+        - $ref: "#/components/parameters/LatitudeQuery"
+        - $ref: "#/components/parameters/LongitudeQuery"
+        - $ref: "#/components/parameters/LineQuery"
+        - $ref: "#/components/parameters/LegQuery"
+        - $ref: "#/components/parameters/ObservationTypeQuery"
+        - $ref: "#/components/parameters/CapturedAtQuery"
+      security:
+        - ShortcutToken: []
+        - TokenQuery: []
+      responses:
+        "200":
+          description: Existing entry updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "201":
+          description: New entry created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "400":
+          description: Invalid request data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: saveTripEntryShortcut
+      summary: Save a trip entry from a shortcut
+      description: "Alias for `/api/entries` with the same request and response behavior."
+      security:
+        - ShortcutToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveEntryRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SaveEntryRequest"
+      responses:
+        "200":
+          description: Existing entry updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "201":
+          description: New entry created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveEntryResponse"
+        "400":
+          description: Invalid request data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    ShortcutToken:
+      type: http
+      scheme: bearer
+      bearerFormat: shortcut-token
+      description: "Value of the server-side `SHORTCUT_TOKEN` environment variable."
+    TokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: Query-token fallback for clients that cannot set headers.
+  parameters:
+    TokenQuery:
+      name: token
+      in: query
+      required: false
+      schema:
+        type: string
+      description: "Shortcut token fallback. Prefer `Authorization: Bearer ...`."
+    ClientEntryIdQuery:
+      name: clientEntryId
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 80
+      description: Optional idempotency key. If omitted, the server creates one.
+    VehicleNumberQuery:
+      name: vehicleNumber
+      in: query
+      required: true
+      schema:
+        type: string
+        pattern: "^\\d{3,4}$"
+      description: "Tram vehicle number. Aliases accepted by the server include `vehicle`, `number`, and `v`."
+    LatitudeQuery:
+      name: lat
+      in: query
+      required: false
+      schema:
+        type: number
+        minimum: -90
+        maximum: 90
+      description: "Capture latitude. Alias accepted by the server: `latitude`."
+    LongitudeQuery:
+      name: lon
+      in: query
+      required: false
+      schema:
+        type: number
+        minimum: -180
+        maximum: 180
+      description: "Capture longitude. Aliases accepted by the server include `lng` and `longitude`."
+    LineQuery:
+      name: line
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Line"
+      description: Saved line override.
+    LegQuery:
+      name: leg
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/LegInput"
+      description: "Saved leg override. Use `auto` to save the server-detected leg; use `unclassified` to explicitly save No leg."
+    ObservationTypeQuery:
+      name: type
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/ObservationType"
+      description: "Observation type. Alias accepted by the server: `observationType`."
+    CapturedAtQuery:
+      name: capturedAt
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+      description: Capture time. Defaults to the server's current time.
+  schemas:
+    SaveEntryRequest:
+      type: object
+      additionalProperties: true
+      required:
+        - vehicleNumber
+      properties:
+        clientEntryId:
+          type: string
+          maxLength: 80
+          description: Idempotency key for retries. If omitted, the server creates one.
+        vehicleNumber:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: Tram vehicle number as 3 or 4 digits.
+        vehicle:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: "Alias for `vehicleNumber`."
+        number:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: "Alias for `vehicleNumber`."
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: "Alias for `lat`."
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+          description: "Alias for `lon`."
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+          description: "Alias for `lon`."
+        capturedAt:
+          type: string
+          format: date-time
+          description: Capture time. Defaults to server time when missing or invalid.
+        savedAt:
+          type: string
+          format: date-time
+          description: "Save time. Defaults to `capturedAt`."
+        line:
+          $ref: "#/components/schemas/Line"
+        savedLine:
+          $ref: "#/components/schemas/Line"
+        inferredLine:
+          $ref: "#/components/schemas/Line"
+        leg:
+          $ref: "#/components/schemas/LegInput"
+        savedLeg:
+          $ref: "#/components/schemas/LegInput"
+        inferredLeg:
+          $ref: "#/components/schemas/Leg"
+        type:
+          $ref: "#/components/schemas/ObservationType"
+        observationType:
+          $ref: "#/components/schemas/ObservationType"
+        locationStatus:
+          type: string
+          maxLength: 48
+        classificationStatus:
+          $ref: "#/components/schemas/ClassificationStatus"
+        routeGroup:
+          type: string
+          maxLength: 48
+        distanceMeters:
+          type: string
+          maxLength: 24
+        nearestStopName:
+          type: string
+          maxLength: 120
+    SaveEntryResponse:
+      type: object
+      required:
+        - ok
+        - id
+        - clientEntryId
+        - vehicleNumber
+        - observationType
+        - capturedAt
+        - savedAt
+        - savedLeg
+        - savedLine
+        - classificationStatus
+        - routeGroup
+        - distanceMeters
+        - nearestStopName
+        - lat
+        - lon
+      properties:
+        ok:
+          type: boolean
+          const: true
+        id:
+          type: string
+          description: Lakebed row id.
+        clientEntryId:
+          type: string
+        vehicleNumber:
+          type: string
+        observationType:
+          $ref: "#/components/schemas/ObservationType"
+        capturedAt:
+          type: string
+          format: date-time
+        savedAt:
+          type: string
+          format: date-time
+        savedLeg:
+          $ref: "#/components/schemas/Leg"
+        savedLine:
+          $ref: "#/components/schemas/Line"
+        classificationStatus:
+          $ref: "#/components/schemas/ClassificationStatus"
+        routeGroup:
+          type: string
+          examples:
+            - home_14_18
+            - school_12_17
+            - none
+        distanceMeters:
+          type: string
+          description: Distance to matched corridor or nearest configured point, if available.
+        nearestStopName:
+          type: string
+        lat:
+          type: string
+          description: Stored rounded latitude, or empty string when unavailable.
+        lon:
+          type: string
+          description: Stored rounded longitude, or empty string when unavailable.
+    ErrorResponse:
+      type: object
+      required:
+        - ok
+        - reason
+      properties:
+        ok:
+          type: boolean
+          const: false
+        reason:
+          type: string
+          enum:
+            - unauthorized
+            - shortcut_token_missing
+            - allowed_email_missing
+            - invalid_vehicle_number
+            - missing_client_entry_id
+            - missing_owner
+    Leg:
+      type: string
+      enum:
+        - unclassified
+        - from_home
+        - to_school
+        - from_school
+        - to_home
+      description: "`unclassified` is shown as No leg in the app."
+    LegInput:
+      type: string
+      enum:
+        - auto
+        - unclassified
+        - from_home
+        - to_school
+        - from_school
+        - to_home
+      description: "`auto` asks the server to save its detected leg. `unclassified` explicitly saves No leg."
+    Line:
+      type: string
+      pattern: "^(unclassified|[A-Z0-9+]{1,8})$"
+      examples:
+        - "12"
+        - "14"
+        - "17"
+        - "18"
+        - unclassified
+    ObservationType:
+      type: string
+      enum:
+        - been_on
+        - seen
+    ClassificationStatus:
+      type: string
+      enum:
+        - matched
+        - ambiguous
+        - no_location
+        - outside_geneva
+        - outside_route
+        - unclassified

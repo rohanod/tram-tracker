@@ -74,6 +74,16 @@ export function normalizeObservationType(value) {
   return isKnownObservationType(value) ? value : "been_on";
 }
 
+export function vehicleHistoryMessage(entry) {
+  if (!entry) {
+    return "";
+  }
+
+  const line = normalizeLine(entry.savedLine ?? entry.line);
+  const leg = normalizeLeg(entry.savedLeg ?? entry.leg);
+  return "Seen before: " + lineLabelForMessage(line) + ", " + LEG_LABELS[leg] + ".";
+}
+
 export function legValuesForCapturedAt(capturedAt) {
   return isBeforeGenevaNoon(capturedAt)
     ? ["unclassified", "from_home", "to_school"]
@@ -142,8 +152,10 @@ export function classifyCapture(location, capturedAt) {
     };
   }
 
-  const routeGroups = uniqueValues(matches.map((match) => match.corridor.routeGroup ?? match.corridor.id));
-  const matchingLines = uniqueValues(matches.map((match) => match.corridor.line).filter(Boolean));
+  const priorityRouteGroups = uniqueValues(matches.map((match) => match.corridor.routeGroup).filter(isPriorityRouteGroup));
+  const effectiveMatches = priorityRouteGroups.length === 1 ? matches.filter((match) => match.corridor.routeGroup === priorityRouteGroups[0]) : matches;
+  const routeGroups = uniqueValues(effectiveMatches.map((match) => match.corridor.routeGroup ?? match.corridor.id));
+  const matchingLines = uniqueValues(effectiveMatches.map((match) => match.corridor.line).filter(Boolean));
 
   if (routeGroups.length > 1) {
     return {
@@ -203,8 +215,16 @@ function legForRouteAndTime(routeGroup, capturedAt) {
   return "unclassified";
 }
 
+function isPriorityRouteGroup(routeGroup) {
+  return routeGroup === "home_14_18" || routeGroup === "school_12_17";
+}
+
 function uniqueValues(values) {
   return Array.from(new Set(values));
+}
+
+function lineLabelForMessage(line) {
+  return line === "unclassified" ? LINE_LABELS.unclassified : "Line " + line;
 }
 
 function isBeforeGenevaNoon(capturedAt) {

@@ -1,0 +1,45 @@
+#include 'actions/web'
+#include 'actions/text'
+
+#define color blue
+#define glyph tram
+
+#question token "What is your API token?" ""
+
+action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
+    "WFInputType": "Number",
+    "WFAskActionAllowsDecimalNumbers": false,
+    "WFAskActionAllowsNegativeNumbers": false
+}
+
+const shortcutToken = text(token)
+const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/lookup"
+
+@vehicleNumber = promptWholeNumber("Vehicle number")
+@vehicleNumberRemainder = @vehicleNumber % 1
+
+repeat attempt for 10 {
+    if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0 {
+        alert("Vehicle number must be a 3 or 4 digit whole number.", "Invalid vehicle number")
+        @vehicleNumber = promptWholeNumber("Vehicle number")
+        @vehicleNumberRemainder = @vehicleNumber % 1
+    }
+}
+
+if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0 {
+    alert("Vehicle number must be a 3 or 4 digit whole number.", "Invalid vehicle number")
+    stop()
+}
+
+const response = jsonRequest(apiURL, "POST", {
+    "vehicleNumber": "{@vehicleNumber}"
+}, {
+    "Authorization": "Bearer {shortcutToken}",
+    "Accept": "application/json"
+})
+
+const rawHistoryMessage = getValue(response, "message")
+const historyMessage = getText(rawHistoryMessage)
+if historyMessage != "" {
+    show("{historyMessage}")
+}

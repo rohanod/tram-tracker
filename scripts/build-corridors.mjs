@@ -1,105 +1,127 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const GENEVA_BOUNDS = { minLat: 46.15, maxLat: 46.26, minLon: 6.04, maxLon: 6.24 };
 const CLIP_PADDING_DEGREES = 0.004;
-const TERMINAL_PADDING_DEGREES = 0.0002;
 const CORRIDOR_CLIP_RADIUS_METERS = 350;
 const SIMPLIFY_TOLERANCE_METERS = 18;
-
-const STOP_POINTS = {
-  line_14: {
-    label: "Line 14",
-    line: "14",
-    routeGroup: "home_14_18",
-    names: [
-      "Genève, Jonction",
-      "Genève, Palladium",
-      "Genève, Stand",
-      "Genève, Bel-Air",
-      "Genève, Coutance",
-      "Genève, gare Cornavin",
-      "Genève, Lyon",
-      "Genève, Poterie",
-      "Genève, Servette",
-      "Genève, Vieusseux",
-      "Vernier, Bouchet",
-      "Vernier, Balexert",
-      "Vernier, Avanchets-Etang",
-      "Vernier, Blandonnet"
-    ]
-  },
-  line_18: {
-    label: "Line 18",
-    line: "18",
-    routeGroup: "home_14_18",
-    names: [
-      "Genève, Bel-Air",
-      "Genève, Coutance",
-      "Genève, gare Cornavin",
-      "Genève, Lyon",
-      "Genève, Poterie",
-      "Genève, Servette",
-      "Genève, Vieusseux",
-      "Vernier, Bouchet",
-      "Vernier, Balexert",
-      "Vernier, Avanchets-Etang",
-      "Vernier, Blandonnet"
-    ]
-  },
-  line_12: {
-    label: "Line 12",
-    line: "12",
-    routeGroup: "school_12_17",
-    names: [
-      "Genève, Plainpalais",
-      "Genève, Place de Neuve",
-      "Genève, Bel-Air",
-      "Genève, Molard",
-      "Genève, Rive",
-      "Genève, Terrassière",
-      "Genève, Villereuse",
-      "Genève-Eaux-Vives, gare",
-      "Genève, Amandolier",
-      "Chêne-Bougeries, Grange-Canal",
-      "Chêne-Bougeries, Grangettes",
-      "Chêne-Bougeries,Grange-Falquet",
-      "Chêne-Bourg, Place Favre",
-      "Chêne-Bourg, Peillonnex",
-      "Thônex, Graveson",
-      "Thônex, Moillesulaz"
-    ]
-  },
-  line_17: {
-    label: "Line 17",
-    line: "17",
-    routeGroup: "school_12_17",
-    names: [
-      "Genève, Plainpalais",
-      "Genève, Place de Neuve",
-      "Genève, Bel-Air",
-      "Genève, Molard",
-      "Genève, Rive",
-      "Genève, Terrassière",
-      "Genève, Villereuse",
-      "Genève-Eaux-Vives, gare",
-      "Genève, Amandolier",
-      "Chêne-Bougeries, Grange-Canal",
-      "Chêne-Bougeries, Grangettes",
-      "Chêne-Bougeries,Grange-Falquet",
-      "Chêne-Bourg, Place Favre",
-      "Chêne-Bourg, Peillonnex",
-      "Thônex, Graveson",
-      "Thônex, Moillesulaz"
-    ]
-  }
+const ROUTE_GROUPS = {
+  "12": "school_12_17",
+  "14": "home_14_18",
+  "17": "school_12_17",
+  "18": "home_14_18"
+};
+const CURATED_STOPS = {
+  "14": [
+    "Genève, Jonction",
+    "Genève, Palladium",
+    "Genève, Stand",
+    "Genève, Bel-Air",
+    "Genève, Coutance",
+    "Genève, gare Cornavin",
+    "Genève, Lyon",
+    "Genève, Poterie",
+    "Genève, Servette",
+    "Genève, Vieusseux",
+    "Vernier, Bouchet",
+    "Vernier, Balexert",
+    "Vernier, Avanchets-Etang",
+    "Vernier, Blandonnet"
+  ],
+  "18": [
+    "Genève, Bel-Air",
+    "Genève, Coutance",
+    "Genève, gare Cornavin",
+    "Genève, Lyon",
+    "Genève, Poterie",
+    "Genève, Servette",
+    "Genève, Vieusseux",
+    "Vernier, Bouchet",
+    "Vernier, Balexert",
+    "Vernier, Avanchets-Etang",
+    "Vernier, Blandonnet"
+  ],
+  "12": [
+    "Genève, Plainpalais",
+    "Genève, Place de Neuve",
+    "Genève, Bel-Air",
+    "Genève, Molard",
+    "Genève, Rive",
+    "Genève, Terrassière",
+    "Genève, Villereuse",
+    "Genève-Eaux-Vives, gare",
+    "Genève, Amandolier",
+    "Chêne-Bougeries, Grange-Canal",
+    "Chêne-Bougeries, Grangettes",
+    "Chêne-Bougeries,Grange-Falquet",
+    "Chêne-Bourg, Place Favre",
+    "Chêne-Bourg, Peillonnex",
+    "Thônex, Graveson",
+    "Thônex, Moillesulaz"
+  ],
+  "17": [
+    "Genève, Plainpalais",
+    "Genève, Place de Neuve",
+    "Genève, Bel-Air",
+    "Genève, Molard",
+    "Genève, Rive",
+    "Genève, Terrassière",
+    "Genève, Villereuse",
+    "Genève-Eaux-Vives, gare",
+    "Genève, Amandolier",
+    "Chêne-Bougeries, Grange-Canal",
+    "Chêne-Bougeries, Grangettes",
+    "Chêne-Bougeries,Grange-Falquet",
+    "Chêne-Bourg, Place Favre",
+    "Chêne-Bourg, Peillonnex",
+    "Thônex, Graveson",
+    "Thônex, Moillesulaz"
+  ]
 };
 
 const stopsData = JSON.parse(await readFile("stops.json", "utf8")).stops;
 const lineData = JSON.parse(await readFile("sitg-tpg-lignes.geojson", "utf8"));
 const stopByName = new Map(stopsData.map((stop) => [stop.name, stop]));
+const tramFeatures = lineData.features.filter((feature) => feature.properties?.VEHICULE === "TRAM");
+const tramLines = unique(tramFeatures.map((feature) => String(feature.properties?.LIGNE ?? ""))).filter(Boolean).sort(compareTransitLines);
 
-const corridors = Object.entries(STOP_POINTS).map(([id, config]) => {
-  const points = config.names.map((name) => {
+const corridors = tramLines.map((line) => {
+  const features = tramFeatures.filter((feature) => String(feature.properties?.LIGNE) === line);
+  const rawPaths = features.flatMap((feature) => geometryPaths(feature.geometry));
+  const points = CURATED_STOPS[line] ? curatedStopsForLine(line) : generatedStopsForLine(line, rawPaths);
+  const clip = boundsFor(points, CLIP_PADDING_DEGREES);
+  const paths = rawPaths
+    .flatMap((path) => clippedPaths(path, clip, points))
+    .map((path) => simplifyPath(path, SIMPLIFY_TOLERANCE_METERS))
+    .filter((path) => path.length >= 2);
+
+  return {
+    id: "line_" + line,
+    label: "Line " + line,
+    line,
+    routeGroup: ROUTE_GROUPS[line] ?? "line_" + line,
+    points,
+    paths
+  };
+});
+
+const cdnPayload = {
+  v: 1,
+  generatedAt: new Date().toISOString(),
+  genevaBounds: GENEVA_BOUNDS,
+  corridors
+};
+
+await mkdir("cdn", { recursive: true });
+await writeFile("cdn/corridors-v1.json", JSON.stringify(cdnPayload));
+await writeFile(
+  "shared/corridors.ts",
+  `export const GENEVA_BOUNDS = ${JSON.stringify(GENEVA_BOUNDS)};\n\nexport const DEFAULT_CORRIDORS = ${JSON.stringify(corridors, null, 2)};\n\nexport let CORRIDORS = DEFAULT_CORRIDORS;\n\nexport function setCorridors(corridors) {\n  if (Array.isArray(corridors) && corridors.length) {\n    CORRIDORS = corridors;\n  }\n}\n`
+);
+
+console.log(`Wrote ${corridors.length} tram corridors: ${tramLines.join(", ")}`);
+
+function curatedStopsForLine(line) {
+  return CURATED_STOPS[line].map((name) => {
     const stop = stopByName.get(name);
     if (!stop) {
       throw new Error(`Missing stop: ${name}`);
@@ -111,58 +133,58 @@ const corridors = Object.entries(STOP_POINTS).map(([id, config]) => {
       lon: round6(platform.location.lon)
     };
   });
+}
 
-  const clip = boundsFor(points, CLIP_PADDING_DEGREES);
-  const terminalClip = boundsFor(points, TERMINAL_PADDING_DEGREES);
-  const paths = lineData.features
-    .filter((feature) => feature.properties?.LIGNE === config.line && feature.properties?.VEHICULE === "TRAM")
-    .flatMap((feature) => clippedPaths(feature.geometry, clip, terminalClip, points))
-    .map((path) => simplifyPath(path, SIMPLIFY_TOLERANCE_METERS))
-    .filter((path) => path.length >= 2);
+function generatedStopsForLine(line, rawPaths) {
+  const routePoints = rawPaths.flatMap((path) => path.map((coordinate) => ({ lat: coordinate[1], lon: coordinate[0] })));
+  const byName = new Map();
+  for (const stop of stopsData) {
+    const platform = stop.platforms?.find((candidate) => candidate.services?.some((service) => sameTramLine(service, line)));
+    if (!platform?.location || byName.has(stop.name)) {
+      continue;
+    }
+    byName.set(stop.name, {
+      name: stop.name,
+      lat: round6(platform.location.lat),
+      lon: round6(platform.location.lon)
+    });
+  }
+  return Array.from(byName.values())
+    .map((stop) => ({ ...stop, order: nearestRouteIndex(stop, routePoints) }))
+    .sort((a, b) => a.order - b.order)
+    .map(({ order, ...stop }) => stop);
+}
 
-  return {
-    id,
-    label: config.label,
-    line: config.line,
-    routeGroup: config.routeGroup,
-    points,
-    paths
-  };
-});
+function sameTramLine(service, line) {
+  return String(service?.line ?? "") === line && String(service?.mode ?? "").toLowerCase() === "tram";
+}
 
-const output = `export const GENEVA_BOUNDS = ${JSON.stringify(GENEVA_BOUNDS)};\n\nexport const CORRIDORS = ${JSON.stringify(corridors, null, 2)};\n`;
-await writeFile("shared/corridors.ts", output);
+function geometryPaths(geometry) {
+  if (geometry?.type === "LineString") {
+    return [geometry.coordinates];
+  }
+  if (geometry?.type === "MultiLineString") {
+    return geometry.coordinates;
+  }
+  return [];
+}
 
-function clippedPaths(geometry, bounds, terminalClip, corridorPoints) {
-  const rawPaths =
-    geometry.type === "LineString"
-      ? [geometry.coordinates]
-      : geometry.type === "MultiLineString"
-        ? geometry.coordinates
-        : [];
-
+function clippedPaths(rawPath, bounds, corridorPoints) {
   const result = [];
-  for (const rawPath of rawPaths) {
-    let segment = [];
-    for (const coordinate of rawPath) {
-      const point = { lat: round6(coordinate[1]), lon: round6(coordinate[0]) };
-      if (
-        isInside(point, bounds) &&
-        point.lon >= terminalClip.minLon &&
-        point.lon <= terminalClip.maxLon &&
-        distanceToCorridorMeters(point, corridorPoints) <= CORRIDOR_CLIP_RADIUS_METERS
-      ) {
-        segment.push([point.lat, point.lon]);
-      } else if (segment.length) {
-        if (segment.length >= 2) {
-          result.push(segment);
-        }
-        segment = [];
+  let segment = [];
+  for (const coordinate of rawPath) {
+    const point = { lat: round6(coordinate[1]), lon: round6(coordinate[0]) };
+    if (isInside(point, bounds) && distanceToCorridorMeters(point, corridorPoints) <= CORRIDOR_CLIP_RADIUS_METERS) {
+      segment.push([point.lat, point.lon]);
+    } else if (segment.length) {
+      if (segment.length >= 2) {
+        result.push(segment);
       }
+      segment = [];
     }
-    if (segment.length >= 2) {
-      result.push(segment);
-    }
+  }
+  if (segment.length >= 2) {
+    result.push(segment);
   }
   return result;
 }
@@ -178,6 +200,19 @@ function boundsFor(points, padding) {
 
 function isInside(point, bounds) {
   return point.lat >= bounds.minLat && point.lat <= bounds.maxLat && point.lon >= bounds.minLon && point.lon <= bounds.maxLon;
+}
+
+function nearestRouteIndex(stop, routePoints) {
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  routePoints.forEach((point, index) => {
+    const distance = haversineMeters(stop, point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
 }
 
 function distanceToCorridorMeters(point, corridorPoints) {
@@ -247,10 +282,31 @@ function distanceToSegmentMeters(point, start, end) {
   return Math.hypot(pointX - (startX + t * dx), pointY - (startY + t * dy));
 }
 
+function haversineMeters(a, b) {
+  const earthRadiusMeters = 6371000;
+  const dLat = degreesToRadians(b.lat - a.lat);
+  const dLon = degreesToRadians(b.lon - a.lon);
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 function degreesToRadians(value) {
   return (value * Math.PI) / 180;
 }
 
 function round6(value) {
   return Math.round(value * 1000000) / 1000000;
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
+}
+
+function compareTransitLines(a, b) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }

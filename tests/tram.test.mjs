@@ -22,8 +22,24 @@ async function loadSyncModule() {
   return import("file://" + join(dir, "sync.mjs"));
 }
 
+async function loadReviewModule() {
+  const dir = await mkdtemp(join(tmpdir(), "tram-review-"));
+  const root = new URL("../shared/", import.meta.url);
+  const review = await readFile(new URL("review.ts", root), "utf8");
+  await writeFile(join(dir, "review.mjs"), review);
+  return import("file://" + join(dir, "review.mjs"));
+}
+
+async function loadRouteStateModule() {
+  const dir = await mkdtemp(join(tmpdir(), "tram-route-state-"));
+  const root = new URL("../shared/", import.meta.url);
+  const routeState = await readFile(new URL("route-state.ts", root), "utf8");
+  await writeFile(join(dir, "route-state.mjs"), routeState);
+  return import("file://" + join(dir, "route-state.mjs"));
+}
+
 test("vehicle numbers must be 3 or 4 digits", async () => {
-  const { cleanVehicleNumber, isValidVehicleNumber, normalizeLine, normalizeObservationType } = await loadSharedModule();
+  const { cleanVehicleNumber, isValidVehicleNumber, normalizeLine, normalizeObservationType, vehicleHistoryMessage } = await loadSharedModule();
 
   assert.equal(cleanVehicleNumber(" 867 "), "867");
   assert.equal(cleanVehicleNumber("1205"), "1205");
@@ -36,6 +52,8 @@ test("vehicle numbers must be 3 or 4 digits", async () => {
   assert.equal(normalizeLine("01"), "1");
   assert.equal(normalizeLine("e+"), "E+");
   assert.equal(normalizeLine("too-long-line"), "unclassified");
+  assert.equal(vehicleHistoryMessage(null), "");
+  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home" }), "Seen before: Line 14, From home.");
 });
 
 test("route classification applies Geneva noon rules", async () => {
@@ -128,4 +146,64 @@ test("server not_found means a pending delete is already settled", async () => {
   assert.equal(isDeleteSettledResult({ ok: true }), true);
   assert.equal(isDeleteSettledResult({ ok: false, reason: "not_found" }), true);
   assert.equal(isDeleteSettledResult({ ok: false, reason: "unauthorized" }), false);
+});
+
+test("recent Trip Entries returns only the two newest captures", async () => {
+  const { recentTripEntries } = await loadReviewModule();
+  const entries = [
+    { clientEntryId: "old", capturedAt: "2026-06-17T06:00:00.000Z" },
+    { clientEntryId: "newest", capturedAt: "2026-06-17T08:00:00.000Z" },
+    { clientEntryId: "middle", capturedAt: "2026-06-17T07:00:00.000Z" }
+  ];
+
+  assert.deepEqual(recentTripEntries(entries, 2).map((entry) => entry.clientEntryId), ["newest", "middle"]);
+});
+
+test("review Leg filters group home and school Trip Entries", async () => {
+  const { filterReviewEntries } = await loadReviewModule();
+  const entries = [
+    { clientEntryId: "from-home", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "from_home" },
+    { clientEntryId: "to-home", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "to_home" },
+    { clientEntryId: "to-school", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "to_school" },
+    { clientEntryId: "from-school", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "from_school" },
+    { clientEntryId: "no-leg", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "unclassified" }
+  ];
+
+  assert.deepEqual(filterReviewEntries(entries, { leg: "home" }).map((entry) => entry.clientEntryId), ["from-home", "to-home"]);
+  assert.deepEqual(filterReviewEntries(entries, { leg: "school" }).map((entry) => entry.clientEntryId), ["to-school", "from-school"]);
+  assert.deepEqual(filterReviewEntries(entries, { leg: "no_leg" }).map((entry) => entry.clientEntryId), ["no-leg"]);
+});
+
+test("review filters combine line type and vehicle number", async () => {
+  const { filterReviewEntries } = await loadReviewModule();
+  const entries = [
+    { clientEntryId: "match-new", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "been_on", vehicleNumber: "867" },
+    { clientEntryId: "wrong-type", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "seen", vehicleNumber: "867" },
+    { clientEntryId: "wrong-line", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "from_home", savedLine: "18", observationType: "been_on", vehicleNumber: "867" },
+    { clientEntryId: "wrong-vehicle", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "been_on", vehicleNumber: "432" },
+    { clientEntryId: "match-old", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "to_home", savedLine: "14", observationType: "been_on", vehicleNumber: "8670" }
+  ];
+
+  assert.deepEqual(
+    filterReviewEntries(entries, { leg: "home", line: "14", type: "been_on", vehicleNumber: "867" }).map((entry) => entry.clientEntryId),
+    ["match-new", "match-old"]
+  );
+});
+
+test("review pagination clamps pages and slices entries", async () => {
+  const { paginateReviewEntries } = await loadReviewModule();
+  const entries = Array.from({ length: 23 }, (_, index) => ({ clientEntryId: String(index + 1) }));
+
+  assert.deepEqual(paginateReviewEntries(entries, 2, 10).entries.map((entry) => entry.clientEntryId), ["11", "12", "13", "14", "15", "16", "17", "18", "19", "20"]);
+  assert.equal(paginateReviewEntries(entries, 99, 10).currentPage, 3);
+  assert.equal(paginateReviewEntries([], 99, 10).currentPage, 1);
+});
+
+test("route state maps hash routes to app pages", async () => {
+  const { appPageFromHash, hashForAppPage } = await loadRouteStateModule();
+
+  assert.equal(appPageFromHash("#/saves"), "saves");
+  assert.equal(appPageFromHash("#/unknown"), "saver");
+  assert.equal(hashForAppPage("saves"), "#/saves");
+  assert.equal(hashForAppPage("saver"), "#/");
 });
