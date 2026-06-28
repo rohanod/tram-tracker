@@ -53,7 +53,8 @@ test("vehicle numbers must be 3 or 4 digits", async () => {
   assert.equal(normalizeLine("e+"), "E+");
   assert.equal(normalizeLine("too-long-line"), "unclassified");
   assert.equal(vehicleHistoryMessage(null), "");
-  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home" }), "Seen before: Line 14, From home.");
+  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "seen" }), "Seen before: Line 14, From home.");
+  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "been_on" }), "Been on before: Line 14, From home.");
 });
 
 test("route classification applies Geneva noon rules", async () => {

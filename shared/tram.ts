@@ -81,7 +81,8 @@ export function vehicleHistoryMessage(entry) {
 
   const line = normalizeLine(entry.savedLine ?? entry.line);
   const leg = normalizeLeg(entry.savedLeg ?? entry.leg);
-  return "Seen before: " + lineLabelForMessage(line) + ", " + LEG_LABELS[leg] + ".";
+  const prefix = normalizeObservationType(entry.observationType) === "been_on" ? "Been on before" : "Seen before";
+  return prefix + ": " + lineLabelForMessage(line) + ", " + LEG_LABELS[leg] + ".";
 }
 
 export function legValuesForCapturedAt(capturedAt) {
