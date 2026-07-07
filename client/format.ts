@@ -1,4 +1,4 @@
-import { classifyCapture, LEG_LABELS, MAIN_LINE_VALUES, legValuesForCapturedAt, normalizeLeg, normalizeLine } from "../shared/tram";
+import { classifyCapture, LEG_LABELS, MAIN_LINE_VALUES, directionOptionsForLine, legLabelForLine, normalizeDirection, normalizeLine } from "../shared/tram";
 import type { LineInfo, LocalEntry, LocationState, MapPoint, Viewer } from "./types";
 
 export const DEFAULT_LINE_CATALOG: Record<string, LineInfo> = {
@@ -94,13 +94,13 @@ export function locationText(location: LocationState, classification: ReturnType
     return "Location will be requested for route defaults.";
   }
   if (classification.status === "matched") {
-    return LEG_LABELS[classification.suggestedLeg as keyof typeof LEG_LABELS] + " on " + lineLabel(classification.suggestedLine) + " near " + classification.nearestStopName;
+    return legLabelForLine(classification.suggestedLine, classification.suggestedLeg) + " on " + lineLabel(classification.suggestedLine) + " near " + classification.nearestStopName;
   }
   if (classification.status === "ambiguous") {
     if (classification.suggestedLeg !== "unclassified") {
       return LEG_LABELS[classification.suggestedLeg as keyof typeof LEG_LABELS] + ". Choose the exact line.";
     }
-    return "Choose the leg and line manually.";
+    return "Choose the direction and line manually.";
   }
   if (classification.status === "outside_route") {
     return "Outside the configured corridors. Choose manually.";
@@ -159,7 +159,7 @@ export function syncButtonLabel(syncing: boolean, pendingCount: number) {
 }
 
 export function legOptionsForEntry(entry: LocalEntry, savedLeg: string) {
-  const options = legValuesForCapturedAt(entry.capturedAt);
+  const options = directionOptionsForLine(entry.savedLine);
   return options.includes(savedLeg) ? options : [savedLeg, ...options];
 }
 
@@ -168,7 +168,7 @@ export function savedTimeForEntry(entry: LocalEntry) {
 }
 
 export function savedLegForEntry(entry: LocalEntry) {
-  return normalizeLeg(entry.savedLeg);
+  return normalizeDirection(entry.savedLeg, entry.savedLine);
 }
 
 export function entryPoint(entry: LocalEntry): MapPoint | null {

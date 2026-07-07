@@ -5,14 +5,14 @@ import { APP_CSS } from "./app-styles";
 import { loadCachedCorridors } from "./corridor-cache";
 import type { LineInfo, LocalEntry, LocationState, MutationResult, ServerEntry, Viewer } from "./types";
 import { DEFAULT_LINE_CATALOG, accountStatusText, compareTransitLines, installPwaAssets, lastSyncText, lineColor, lineLabel, loadLineCatalog, locationText, requestLocation, syncButtonLabel } from "./format";
-import { LAST_SYNC_META_KEY, PRIOR_AUTH_KEY, accessCacheDebug, clearAccessCache, createClientEntryId, debugAccess, debugSync, enqueueDeleteOperation, enqueueUpsertOperation, errorMessage, getSyncOperation, migrateLegacyDeletePendingEntries, putLocalEntry, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation, shouldClearAccessCacheForViewer, syncOpKey, viewerDebug, wakeFailedSyncOperations, writeAccessCache, writeMeta } from "./local-store";
+import { LAST_SYNC_META_KEY, PRIOR_AUTH_KEY, accessCacheDebug, clearAccessCache, createClientEntryId, debugAccess, debugSync, enqueueDeleteOperation, enqueueUpsertOperation, errorMessage, getSyncOperation, migrateLegacyDeletePendingEntries, migrateLegacyDirections, putLocalEntry, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation, shouldClearAccessCacheForViewer, syncOpKey, viewerDebug, wakeFailedSyncOperations, writeAccessCache, writeMeta } from "./local-store";
 import { localEntryFromServerEntry, mergeServerEntries, refreshLocalState, syncPendingEntries } from "./local-sync";
 import { AuthGate, LocationPermissionWarning, PageTabs, Toast } from "./ui";
 import { EntryEditDialog, EntryRow, OtherLineChip, SavedLocationDialog } from "./entry-ui";
 import { shortcutPrefillFromSearch } from "./prefill";
 import { DEFAULT_REVIEW_FILTERS, filterReviewEntries, paginateReviewEntries, recentTripEntries } from "../shared/review";
 import { appPageFromHash, hashForAppPage } from "../shared/route-state";
-import { classifyCapture, isValidVehicleNumber, LEG_LABELS, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legValuesForCapturedAt, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
+import { classifyCapture, directionOptionsForLine, isValidVehicleNumber, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legLabelForLine, normalizeDirection, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
 
 
 
@@ -23,6 +23,7 @@ export function App() {
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
+  const migrateDirections = useMutation<[], MutationResult>("migrateDirections");
 
   const [vehicleNumber, setVehicleNumber] = useState("");
   const [observationType, setObservationType] = useState("been_on");
@@ -56,14 +57,15 @@ export function App() {
   const previousAccessDebug = useRef("");
   const prefillApplied = useRef(false);
   const syncInFlight = useRef(false);
+  const migrationStarted = useRef(false);
 
   const canUseSaver = Boolean(viewer?.isAllowed || cachedAccessAllowed || (!isOnline && priorAuthorized));
   const activeSurface = canUseSaver ? "saver" : "auth_gate";
   const cleanNumber = normalizeVehicleNumber(vehicleNumber);
   const currentPoint = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
   const currentClassification = useMemo(() => classifyCapture(currentPoint, nowIso), [currentPoint?.lat, currentPoint?.lon, nowIso]);
-  const currentLegValues = useMemo(() => legValuesForCapturedAt(nowIso), [nowIso]);
   const selectedLineIsMain = MAIN_LINE_VALUES.includes(selectedLine);
+  const currentLegValues = useMemo(() => directionOptionsForLine(selectedLine), [selectedLine]);
   const otherLineOptions = useMemo(() => allLineOptions.filter((line) => !MAIN_LINE_VALUES.includes(line)), [allLineOptions]);
   const selectedLineInfo = lineCatalog[normalizeLine(selectedLine)];
   const visibleEntries = useMemo(() => {
@@ -107,6 +109,7 @@ export function App() {
       path: typeof window === "undefined" ? "" : window.location.pathname
     });
     void migrateLegacyDeletePendingEntries()
+      .then(() => migrateLegacyDirections())
       .then(() => wakeFailedSyncOperations())
       .then(() => refreshLocalState(setLocalEntries, setPendingOperationCount))
       .catch((err) => debugSync("startup-local-state-error", { error: errorMessage(err) }));
@@ -224,6 +227,17 @@ export function App() {
   }, [viewer?.isAllowed, viewer?.isGuest, viewer?.email, viewer?.userId, cachedAccessAllowed, accessCacheHydrated, auth.isLoading]);
 
   useEffect(() => {
+    if (!viewer?.isAllowed || migrationStarted.current) {
+      return;
+    }
+
+    migrationStarted.current = true;
+    void migrateDirections()
+      .then(() => refreshLocalState(setLocalEntries, setPendingOperationCount))
+      .catch((err) => debugSync("direction-migration-error", { error: errorMessage(err) }));
+  }, [viewer?.isAllowed]);
+
+  useEffect(() => {
     const snapshot = {
       activeSurface,
       canUseSaver,
@@ -269,9 +283,9 @@ export function App() {
 
   useEffect(() => {
     if (!legTouched) {
-      setSelectedLeg(currentClassification.suggestedLeg);
+      setSelectedLeg(normalizeDirection(currentClassification.suggestedLeg, selectedLine || currentClassification.suggestedLine));
     }
-  }, [currentClassification.suggestedLeg, legTouched]);
+  }, [currentClassification.suggestedLeg, currentClassification.suggestedLine, selectedLine, legTouched]);
 
   useEffect(() => {
     if (!lineTouched) {
@@ -382,10 +396,10 @@ export function App() {
     const savedAt = capturedAt;
     const point = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
     const classification = classifyCapture(point, capturedAt);
-    const inferredLeg = classification.suggestedLeg;
-    const savedLeg = normalizeLeg(selectedLeg || inferredLeg);
     const inferredLine = classification.suggestedLine;
     const savedLine = normalizeLine(selectedLine || inferredLine);
+    const inferredLeg = normalizeDirection(classification.suggestedLeg, inferredLine);
+    const savedLeg = normalizeDirection(selectedLeg || inferredLeg, savedLine);
     const priorBeenOnCount = visibleEntries.filter((entry) => entry.vehicleNumber === cleanNumber && normalizeObservationType(entry.observationType) === "been_on").length;
     const entry: LocalEntry = {
       clientEntryId: createClientEntryId(),
@@ -416,7 +430,7 @@ export function App() {
     setVehicleNumber("");
     setLegTouched(false);
     setLineTouched(false);
-    setSelectedLeg(classification.suggestedLeg);
+    setSelectedLeg(normalizeDirection(classification.suggestedLeg, classification.suggestedLine));
     setSelectedLine(classification.suggestedLine);
     setShowSaveDialog(false);
     setMessage(isOnline && viewer?.isAllowed ? "Saved locally. Syncing now." : "Saved on this device. It will sync when online.");
@@ -511,12 +525,10 @@ export function App() {
                   />
                 </label>
                 <label>
-                  <span>Leg</span>
+                  <span>Direction</span>
                   <select value={reviewFilters.leg} onChange={(event) => updateReviewFilter("leg", event.currentTarget.value)}>
-                    <option value="all">All legs</option>
-                    <option value="home">Home</option>
-                    <option value="school">School</option>
-                    <option value="no_leg">No leg</option>
+                    <option value="all">All directions</option>
+                    <option value="no_leg">No direction</option>
                   </select>
                 </label>
                 <label>
@@ -619,7 +631,7 @@ export function App() {
                   <div className="save-dialog-header">
                     <div>
                       <h2 id="new-save-title">New vehicle save</h2>
-                      <p className="subtle">Capture the number, type, leg, line, and current location.</p>
+                      <p className="subtle">Capture the number, type, direction, line, and current location.</p>
                     </div>
                     <button className="secondary-button small-button" type="button" onClick={() => setShowSaveDialog(false)}>
                       Close
@@ -664,7 +676,7 @@ export function App() {
                   </div>
                 </section>
 
-                <section className="default-card" aria-label="Location and leg default">
+                <section className="default-card" aria-label="Location and direction default">
                   <div className="location-row">
                     <div>
                       <p className="field-label">Default</p>
@@ -677,7 +689,7 @@ export function App() {
 
                   <LocationPermissionWarning location={location} onRetry={() => requestLocation(setLocation)} />
 
-                  <div className="leg-grid" role="radiogroup" aria-label="Leg direction">
+                  <div className="leg-grid" role="radiogroup" aria-label="Direction">
                     {currentLegValues.map((leg) => (
                       <button
                         className={selectedLeg === leg ? "leg-option active" : "leg-option"}
@@ -690,10 +702,17 @@ export function App() {
                           setSelectedLeg(leg);
                         }}
                       >
-                        {LEG_LABELS[leg as keyof typeof LEG_LABELS]}
+                        {legLabelForLine(selectedLine, leg)}
                       </button>
                     ))}
                   </div>
+                  <label className="custom-direction-field">
+                    <span>Custom direction</span>
+                    <input value={selectedLeg === "unclassified" ? "" : selectedLeg} placeholder="e.g. CERN" onInput={(event) => {
+                      setLegTouched(true);
+                      setSelectedLeg(event.currentTarget.value);
+                    }} />
+                  </label>
                 </section>
               </div>
 

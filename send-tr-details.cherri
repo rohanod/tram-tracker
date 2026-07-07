@@ -6,7 +6,8 @@
 #define color orange
 #define glyph tram
 
-#question token "What is your API token?" ""
+#question token "What is your API token?" "API_TOKEN"
+const shortcutToken = text(token)
 
 action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFInputType": "Number",
@@ -14,12 +15,10 @@ action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFAskActionAllowsNegativeNumbers": false
 }
 
-const shortcutToken = text(token)
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/save"
 
-const lineChoices = list("12", "14", "17", "18", "unclassified")
 const typeChoices = list("been_on", "seen")
-const legChoices = list("auto", "from_home", "to_school", "from_school", "to_home", "unclassified")
+const tripChoices = list("From Home - Tram 18 - Grand-Lancy, Palettes", "From Home - Tram 14 - Bernex, Vailly", "To School - Tram 17 - Annemasse, Parc Montessuit", "To School - Tram 12 - Thônex, Moillesulaz", "From School - Tram 17 - Lancy-Pont-Rouge, Gare", "From School - Tram 12 - Lancy-Bachet, Gare", "To Home - Tram 18 - Meyrin, CERN", "To Home - Tram 14 - Meyrin, Gravière", "Manual - no direction")
 
 @vehicleNumber = promptWholeNumber("Vehicle number")
 @vehicleNumberRemainder = @vehicleNumber % 1
@@ -36,9 +35,43 @@ if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0
     alert("Vehicle number must be a 3 or 4 digit whole number.", "Invalid vehicle number")
     stop()
 }
-const line = chooseFromList(lineChoices, "Line")
 const observationType = chooseFromList(typeChoices, "Observation type")
-const leg = chooseFromList(legChoices, "Leg")
+const trip = chooseFromList(tripChoices, "Trip")
+@line = "unclassified"
+@direction = "unclassified"
+
+if trip == "From Home - Tram 18 - Grand-Lancy, Palettes" {
+    @line = "18"
+    @direction = "Grand-Lancy, Palettes"
+}
+if trip == "From Home - Tram 14 - Bernex, Vailly" {
+    @line = "14"
+    @direction = "Bernex, Vailly"
+}
+if trip == "To School - Tram 17 - Annemasse, Parc Montessuit" {
+    @line = "17"
+    @direction = "Annemasse, Parc Montessuit"
+}
+if trip == "To School - Tram 12 - Thônex, Moillesulaz" {
+    @line = "12"
+    @direction = "Thônex, Moillesulaz"
+}
+if trip == "From School - Tram 17 - Lancy-Pont-Rouge, Gare" {
+    @line = "17"
+    @direction = "Lancy-Pont-Rouge, Gare"
+}
+if trip == "From School - Tram 12 - Lancy-Bachet, Gare" {
+    @line = "12"
+    @direction = "Lancy-Bachet, Gare"
+}
+if trip == "To Home - Tram 18 - Meyrin, CERN" {
+    @line = "18"
+    @direction = "Meyrin, CERN"
+}
+if trip == "To Home - Tram 14 - Meyrin, Gravière" {
+    @line = "14"
+    @direction = "Meyrin, Gravière"
+}
 
 const now = currentDate()
 const capturedAt = formatTimestamp(now, "Custom", "None", "yyyy-MM-dd'T'HH:mm:ssXXX")
@@ -48,9 +81,9 @@ const lon = getLocationDetail(location, "Longitude")
 
 const response = jsonRequest(apiURL, "POST", {
     "vehicleNumber": "{@vehicleNumber}",
-    "line": "{line}",
+    "line": "{@line}",
     "type": "{observationType}",
-    "leg": "{leg}",
+    "direction": "{@direction}",
     "capturedAt": "{capturedAt}",
     "lat": "{lat}",
     "lon": "{lon}"

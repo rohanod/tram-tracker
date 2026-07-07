@@ -556,6 +556,25 @@ button:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.custom-direction-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.custom-direction-field input {
+  min-height: var(--control-size-lg);
+  border: 1px solid var(--color-border-primary-outline);
+  border-radius: var(--mut-radius-control);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 var(--control-gutter-lg);
+  font: inherit;
+}
+
 .main-line-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

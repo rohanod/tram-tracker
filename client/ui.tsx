@@ -97,7 +97,7 @@ export function LocationPermissionWarning({ location, onRetry }: { location: Loc
         <strong>{isDenied ? "Location permission is off" : "Location is unavailable"}</strong>
         <p>
           {isDenied
-            ? "Route and leg defaults cannot be detected until location access is enabled for this site. You can still save manually."
+            ? "Route and direction defaults cannot be detected until location access is enabled for this site. You can still save manually."
             : "The app could not get your current position. Check signal or try again; manual saving still works."}
         </p>
       </div>

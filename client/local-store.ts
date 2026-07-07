@@ -1,5 +1,5 @@
 import { isDeleteSettledResult } from "../shared/sync";
-import { normalizeLeg, normalizeLine, normalizeObservationType } from "../shared/tram";
+import { normalizeDirection, normalizeLine, normalizeObservationType } from "../shared/tram";
 import type { AccessCache, LocalEntry, MutationResult, ServerEntry, SyncOperation, Viewer } from "./types";
 
 const DB_NAME = "tram-vehicle-saver";
@@ -397,6 +397,20 @@ export async function migrateLegacyDeletePendingEntries(): Promise<void> {
   }
 }
 
+export async function migrateLegacyDirections(): Promise<void> {
+  const entries = await getLocalEntries();
+  for (const entry of entries) {
+    const savedLeg = normalizeDirection(entry.savedLeg, entry.savedLine);
+    const inferredLeg = normalizeDirection(entry.inferredLeg, entry.inferredLine);
+    if (savedLeg === entry.savedLeg && inferredLeg === entry.inferredLeg) {
+      continue;
+    }
+
+    debugSync("legacy-direction-migrate", { clientEntryId: entry.clientEntryId });
+    await putLocalEntry({ ...entry, savedLeg, inferredLeg });
+  }
+}
+
 export async function wakeFailedSyncOperations(): Promise<void> {
   const operations = await getSyncOperations();
   for (const operation of operations) {
@@ -475,12 +489,13 @@ export async function removeLocalEntry(clientEntryId: string): Promise<void> {
 }
 
 function normalizeLocalEntry(entry: LocalEntry): LocalEntry {
+  const savedLine = normalizeLine(entry.savedLine);
   return {
     ...entry,
     observationType: normalizeObservationType(entry.observationType),
     savedAt: entry.savedAt || entry.capturedAt,
-    savedLeg: normalizeLeg(entry.savedLeg),
-    savedLine: normalizeLine(entry.savedLine),
+    savedLeg: normalizeDirection(entry.savedLeg, savedLine),
+    savedLine,
     inferredLine: normalizeLine(entry.inferredLine),
     syncStatus: entry.syncStatus ?? "synced",
     lastError: entry.lastError ?? "",

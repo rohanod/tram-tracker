@@ -67,6 +67,8 @@ paths:
         - $ref: "#/components/parameters/LongitudeQuery"
         - $ref: "#/components/parameters/LineQuery"
         - $ref: "#/components/parameters/LegQuery"
+        - $ref: "#/components/parameters/DirectionQuery"
+        - $ref: "#/components/parameters/CustomDirectionQuery"
         - $ref: "#/components/parameters/ObservationTypeQuery"
         - $ref: "#/components/parameters/CapturedAtQuery"
       security:
@@ -149,6 +151,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/shortcut/migrate-directions:
+    post:
+      operationId: migrateShortcutDirections
+      summary: Migrate stored legacy legs to headsign directions
+      description: "Token-protected maintenance endpoint for converting legacy leg values to line-specific headsigns."
+      security:
+        - ShortcutToken: []
+      responses:
+        "200":
+          description: Migration complete.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                  - updated
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  updated:
+                    type: number
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     ShortcutToken:
@@ -216,7 +247,21 @@ components:
       required: false
       schema:
         $ref: "#/components/schemas/LegInput"
-      description: "Saved leg override. Use `auto` to save the server-detected leg; use `unclassified` to explicitly save No leg."
+      description: "Legacy saved direction override. Prefer `direction`."
+    DirectionQuery:
+      name: direction
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/DirectionInput"
+      description: "Saved direction/headsign override. Use `auto` for the server-detected direction."
+    CustomDirectionQuery:
+      name: customDirection
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Direction"
+      description: "Free-text direction override. Takes precedence when non-empty."
     ObservationTypeQuery:
       name: type
       in: query
@@ -294,10 +339,15 @@ components:
           $ref: "#/components/schemas/Line"
         leg:
           $ref: "#/components/schemas/LegInput"
+          deprecated: true
+        direction:
+          $ref: "#/components/schemas/DirectionInput"
+        customDirection:
+          $ref: "#/components/schemas/Direction"
         savedLeg:
-          $ref: "#/components/schemas/LegInput"
+          $ref: "#/components/schemas/DirectionInput"
         inferredLeg:
-          $ref: "#/components/schemas/Leg"
+          $ref: "#/components/schemas/Direction"
         type:
           $ref: "#/components/schemas/ObservationType"
         observationType:
@@ -354,7 +404,7 @@ components:
           type: string
           format: date-time
         savedLeg:
-          $ref: "#/components/schemas/Leg"
+          $ref: "#/components/schemas/Direction"
         savedLine:
           $ref: "#/components/schemas/Line"
         classificationStatus:
@@ -376,6 +426,9 @@ components:
         lon:
           type: string
           description: Stored rounded longitude, or empty string when unavailable.
+        message:
+          type: string
+          description: Previous vehicle history message, including prior date, time, line, and direction when available.
     ErrorResponse:
       type: object
       required:
@@ -413,6 +466,27 @@ components:
         - from_school
         - to_home
       description: "`auto` asks the server to save its detected leg. `unclassified` explicitly saves No leg."
+    Direction:
+      type: string
+      maxLength: 80
+      examples:
+        - Bernex, Vailly
+        - Meyrin, Gravière
+        - Grand-Lancy, Palettes
+        - Meyrin, CERN
+        - unclassified
+      description: "Saved direction/headsign. Legacy leg values are migrated to line-specific headsigns."
+    DirectionInput:
+      oneOf:
+        - $ref: "#/components/schemas/Direction"
+        - type: string
+          enum:
+            - auto
+            - from_home
+            - to_school
+            - from_school
+            - to_home
+      description: "`auto` saves the server-detected direction. Legacy leg values are still accepted."
     Line:
       type: string
       pattern: "^(unclassified|[A-Z0-9+]{1,8})$"

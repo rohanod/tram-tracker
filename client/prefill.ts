@@ -1,17 +1,17 @@
-import { normalizeLeg, normalizeLine, normalizeObservationType } from "../shared/tram";
+import { normalizeDirection, normalizeLine, normalizeObservationType } from "../shared/tram";
 
 export function shortcutPrefillFromSearch(search: string) {
   const params = new URLSearchParams(search);
   const vehicleRaw = firstSearchParam(params, ["vehicleNumber", "vehicle", "number", "v"]);
   const lineRaw = firstSearchParam(params, ["savedLine", "line", "route"]);
-  const legRaw = firstSearchParam(params, ["savedLeg", "leg"]);
+  const legRaw = firstSearchParam(params, ["savedDirection", "direction", "savedLeg", "leg"]);
   const observationRaw = firstSearchParam(params, ["observationType", "type", "capture"]);
   const latRaw = firstSearchParam(params, ["lat", "latitude"]);
   const lonRaw = firstSearchParam(params, ["lon", "lng", "longitude"]);
   const accuracyRaw = firstSearchParam(params, ["accuracy", "horizontalAccuracy"]);
   const vehicleNumber = String(vehicleRaw ?? "").replace(/\D/g, "").slice(0, 4);
   const line = lineRaw ? normalizeLine(lineRaw) : "";
-  const leg = legRaw ? normalizePrefillLeg(legRaw) : "";
+  const leg = legRaw ? normalizePrefillLeg(legRaw, line) : "";
   const lat = Number(latRaw);
   const lon = Number(lonRaw);
   const accuracy = Number(accuracyRaw);
@@ -40,11 +40,11 @@ function firstSearchParam(params: URLSearchParams, names: string[]) {
   return "";
 }
 
-function normalizePrefillLeg(value: string) {
+function normalizePrefillLeg(value: string, line: string) {
   const leg = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (leg === "none" || leg === "no_leg" || leg === "manual" || leg === "weekend") {
     return "unclassified";
   }
 
-  return normalizeLeg(leg);
+  return normalizeDirection(value, line);
 }

@@ -38,8 +38,8 @@ async function loadRouteStateModule() {
   return import("file://" + join(dir, "route-state.mjs"));
 }
 
-test("vehicle numbers must be 3 or 4 digits", async () => {
-  const { cleanVehicleNumber, isValidVehicleNumber, normalizeLine, normalizeObservationType, vehicleHistoryMessage } = await loadSharedModule();
+test("vehicle numbers and directions normalize", async () => {
+  const { cleanVehicleNumber, directionOptionsForLine, headsignForLineAndLeg, isValidVehicleNumber, legLabelForLine, normalizeDirection, normalizeLine, normalizeObservationType, vehicleHistoryMessage } = await loadSharedModule();
 
   assert.equal(cleanVehicleNumber(" 867 "), "867");
   assert.equal(cleanVehicleNumber("1205"), "1205");
@@ -53,8 +53,18 @@ test("vehicle numbers must be 3 or 4 digits", async () => {
   assert.equal(normalizeLine("e+"), "E+");
   assert.equal(normalizeLine("too-long-line"), "unclassified");
   assert.equal(vehicleHistoryMessage(null), "");
-  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "seen" }), "Seen before: Line 14, From home.");
-  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "been_on" }), "Been on before: Line 14, From home.");
+  assert.deepEqual(directionOptionsForLine("14"), ["unclassified", "Bernex, Vailly", "Meyrin, Gravière"]);
+  assert.equal(headsignForLineAndLeg("14", "from_home"), "Bernex, Vailly");
+  assert.equal(headsignForLineAndLeg("18", "from_home"), "Grand-Lancy, Palettes");
+  assert.equal(headsignForLineAndLeg("17", "to_school"), "Annemasse, Parc Montessuit");
+  assert.equal(headsignForLineAndLeg("12", "from_school"), "Lancy-Bachet, Gare");
+  assert.equal(headsignForLineAndLeg("14", "to_home"), "Meyrin, Gravière");
+  assert.equal(normalizeDirection("from_home", "14"), "Bernex, Vailly");
+  assert.equal(normalizeDirection("Lancy-Bachet, gare", "12"), "Lancy-Bachet, Gare");
+  assert.equal(normalizeDirection("To CERN", "18"), "CERN");
+  assert.equal(legLabelForLine("14", "from_home"), "To Bernex, Vailly");
+  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "seen", capturedAt: "2026-06-17T06:30:00.000Z" }), "Seen before: 17 Jun 2026, 08:30, Line 14, To Bernex, Vailly.");
+  assert.equal(vehicleHistoryMessage({ savedLine: "18", direction: "Grand-Lancy, Palettes", observationType: "been_on", capturedAt: "2026-06-17T14:45:00.000Z" }), "Been on before: 17 Jun 2026, 16:45, Line 18, To Grand-Lancy, Palettes.");
 });
 
 test("route classification applies Geneva noon rules", async () => {
@@ -163,10 +173,10 @@ test("recent Trip Entries returns only the two newest captures", async () => {
 test("review Leg filters group home and school Trip Entries", async () => {
   const { filterReviewEntries } = await loadReviewModule();
   const entries = [
-    { clientEntryId: "from-home", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "from_home" },
-    { clientEntryId: "to-home", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "to_home" },
-    { clientEntryId: "to-school", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "to_school" },
-    { clientEntryId: "from-school", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "from_school" },
+    { clientEntryId: "from-home", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "Bernex, Vailly" },
+    { clientEntryId: "to-home", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "Meyrin, CERN" },
+    { clientEntryId: "to-school", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "Thônex, Moillesulaz" },
+    { clientEntryId: "from-school", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "Lancy-Pont-Rouge, Gare" },
     { clientEntryId: "no-leg", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "unclassified" }
   ];
 
@@ -178,11 +188,11 @@ test("review Leg filters group home and school Trip Entries", async () => {
 test("review filters combine line type and vehicle number", async () => {
   const { filterReviewEntries } = await loadReviewModule();
   const entries = [
-    { clientEntryId: "match-new", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "been_on", vehicleNumber: "867" },
-    { clientEntryId: "wrong-type", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "seen", vehicleNumber: "867" },
-    { clientEntryId: "wrong-line", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "from_home", savedLine: "18", observationType: "been_on", vehicleNumber: "867" },
-    { clientEntryId: "wrong-vehicle", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "from_home", savedLine: "14", observationType: "been_on", vehicleNumber: "432" },
-    { clientEntryId: "match-old", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "to_home", savedLine: "14", observationType: "been_on", vehicleNumber: "8670" }
+    { clientEntryId: "match-new", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "been_on", vehicleNumber: "867" },
+    { clientEntryId: "wrong-type", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "seen", vehicleNumber: "867" },
+    { clientEntryId: "wrong-line", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "Grand-Lancy, Palettes", savedLine: "18", observationType: "been_on", vehicleNumber: "867" },
+    { clientEntryId: "wrong-vehicle", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "been_on", vehicleNumber: "432" },
+    { clientEntryId: "match-old", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "Meyrin, Gravière", savedLine: "14", observationType: "been_on", vehicleNumber: "8670" }
   ];
 
   assert.deepEqual(

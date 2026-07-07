@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { classifyCapture, isInGenevaBounds, LEG_LABELS, MAIN_LINE_VALUES, OBSERVATION_LABELS, legValuesForCapturedAt, normalizeLeg, normalizeLine, normalizeLocation, normalizeObservationType } from "../shared/tram";
-import { entryPoint, formatEntryDate, legOptionsForEntry, lineColor, lineLabel, parsePointFromText, savedLegForEntry, savedTimeForEntry, statusLabel, syncLabel } from "./format";
+import { classifyCapture, directionOptionsForLine, isInGenevaBounds, MAIN_LINE_VALUES, OBSERVATION_LABELS, legLabelForLine, normalizeDirection, normalizeLine, normalizeLocation, normalizeObservationType } from "../shared/tram";
+import { entryPoint, formatEntryDate, lineColor, lineLabel, parsePointFromText, savedLegForEntry, savedTimeForEntry, statusLabel, syncLabel } from "./format";
 import { MapCnReviewMap } from "./map-ui";
 import { ConfirmDeleteDialog } from "./ui";
 import type { LineInfo, LocalEntry, MapPoint } from "./types";
@@ -17,8 +17,8 @@ export function EntryRow({
   onDelete: (entry: LocalEntry) => Promise<void>;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const savedLeg = normalizeLeg(entry.savedLeg);
   const savedLine = normalizeLine(entry.savedLine);
+  const savedLeg = normalizeDirection(entry.savedLeg, savedLine);
   const observation = normalizeObservationType(entry.observationType);
   const hasSavedLocation = Boolean(entry.lat && entry.lon && Number.isFinite(Number(entry.lat)) && Number.isFinite(Number(entry.lon)));
 
@@ -33,8 +33,8 @@ export function EntryRow({
       </div>
       <div className="entry-summary-grid">
         <div>
-          <span>Leg</span>
-          <strong>{LEG_LABELS[savedLeg as keyof typeof LEG_LABELS]}</strong>
+          <span>Direction</span>
+          <strong>{legLabelForLine(savedLine, savedLeg)}</strong>
         </div>
         <div>
           <span>Line</span>
@@ -89,8 +89,8 @@ export function EntryEditDialog({
   onSave: (entry: LocalEntry) => Promise<void>;
   onShowMap: (entry: LocalEntry) => void;
 }) {
-  const [draftLeg, setDraftLeg] = useState(normalizeLeg(entry.savedLeg));
   const [draftLine, setDraftLine] = useState(normalizeLine(entry.savedLine));
+  const [draftLeg, setDraftLeg] = useState(normalizeDirection(entry.savedLeg, draftLine));
   const [latText, setLatText] = useState(entry.lat);
   const [lonText, setLonText] = useState(entry.lon);
   const [showOtherLine, setShowOtherLine] = useState(!MAIN_LINE_VALUES.includes(normalizeLine(entry.savedLine)) && normalizeLine(entry.savedLine) !== "unclassified");
@@ -102,7 +102,8 @@ export function EntryEditDialog({
   const editablePoint = parsePointFromText(latText, lonText);
   const draftLineIsMain = MAIN_LINE_VALUES.includes(draftLine);
   const otherActive = showOtherLine || (!draftLineIsMain && draftLine !== "unclassified");
-  const legOptions = legOptionsForEntry(entry, draftLeg);
+  const draftDirectionOptions = directionOptionsForLine(draftLine);
+  const legOptions = draftDirectionOptions.includes(draftLeg) ? draftDirectionOptions : [draftLeg, ...draftDirectionOptions];
   const otherLineOptions = lineOptions.filter((line) => !MAIN_LINE_VALUES.includes(line) && line !== "unclassified");
 
   useEffect(() => {
@@ -170,7 +171,7 @@ export function EntryEditDialog({
         locationStatus: "unavailable",
         classificationStatus: classification.status,
         inferredLeg: classification.suggestedLeg,
-        savedLeg: normalizeLeg(draftLeg),
+        savedLeg: normalizeDirection(draftLeg, draftLine),
         inferredLine: classification.suggestedLine,
         savedLine: normalizeLine(draftLine),
         routeGroup: classification.routeGroup,
@@ -197,7 +198,7 @@ export function EntryEditDialog({
       locationStatus: "captured",
       classificationStatus: classification.status,
       inferredLeg: classification.suggestedLeg,
-      savedLeg: normalizeLeg(draftLeg),
+      savedLeg: normalizeDirection(draftLeg, draftLine),
       inferredLine: classification.suggestedLine,
       savedLine: normalizeLine(draftLine),
       routeGroup: classification.routeGroup,
@@ -248,17 +249,21 @@ export function EntryEditDialog({
         </div>
 
         <section className="edit-section">
-          <p className="field-label">Leg</p>
-          <div className="entry-leg-grid" role="radiogroup" aria-label={"Leg for vehicle " + entry.vehicleNumber}>
+          <p className="field-label">Direction</p>
+          <div className="entry-leg-grid" role="radiogroup" aria-label={"Direction for vehicle " + entry.vehicleNumber}>
             {legOptions.map((leg) => {
               const active = draftLeg === leg;
               return (
                 <button className={active ? "entry-leg-option active" : "entry-leg-option"} key={leg} type="button" role="radio" aria-checked={active} onClick={() => setDraftLeg(leg)}>
-                  {LEG_LABELS[leg as keyof typeof LEG_LABELS]}
+                  {legLabelForLine(draftLine, leg)}
                 </button>
               );
             })}
           </div>
+          <label className="custom-direction-field">
+            <span>Custom direction</span>
+            <input value={draftLeg === "unclassified" ? "" : draftLeg} placeholder="e.g. CERN" onInput={(event) => setDraftLeg(event.currentTarget.value)} />
+          </label>
         </section>
 
         <section className="edit-section">
@@ -451,8 +456,8 @@ export function SavedLocationDialog({ entry, onClose }: { entry: LocalEntry; onC
             <dd>{formatEntryDate(savedTimeForEntry(entry))}</dd>
           </div>
           <div>
-            <dt>Leg</dt>
-            <dd>{LEG_LABELS[savedLegForEntry(entry) as keyof typeof LEG_LABELS]}</dd>
+            <dt>Direction</dt>
+            <dd>{legLabelForLine(entry.savedLine, savedLegForEntry(entry))}</dd>
           </div>
           <div>
             <dt>Line</dt>

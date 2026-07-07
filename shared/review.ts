@@ -51,15 +51,19 @@ export function paginateReviewEntries(entries, page, pageSize = 10) {
 }
 
 export function matchesLegGroup(savedLeg, filter) {
+  const leg = String(savedLeg ?? "").trim().toLowerCase();
   if (filter === "all") {
     return true;
   }
   if (filter === "home") {
-    return savedLeg === "from_home" || savedLeg === "to_home";
+    return HOME_DIRECTIONS.includes(leg);
   }
   if (filter === "school") {
-    return savedLeg === "to_school" || savedLeg === "from_school";
+    return SCHOOL_DIRECTIONS.includes(leg);
   }
 
-  return savedLeg === "unclassified";
+  return leg === "unclassified";
 }
+
+const HOME_DIRECTIONS = ["from_home", "to_home", "grand-lancy, palettes", "meyrin, cern", "bernex, vailly", "meyrin, gravière"];
+const SCHOOL_DIRECTIONS = ["to_school", "from_school", "annemasse, parc montessuit", "thônex, moillesulaz", "lancy-pont-rouge, gare", "lancy-bachet, gare"];

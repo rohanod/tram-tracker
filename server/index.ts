@@ -2,7 +2,7 @@ import { capsule, endpoint, json, mutation, query, string, table, text } from "l
 import {
   classifyCapture,
   isValidVehicleNumber,
-  normalizeLeg,
+  normalizeDirection,
   normalizeLine,
   normalizeLocation,
   normalizeObservationType,
@@ -90,7 +90,7 @@ export default capsule({
         return { ok: false, reason: "not_found" };
       }
 
-      ctx.db.tripEntries.update(entry.id, { savedLeg: normalizeLeg(leg) });
+      ctx.db.tripEntries.update(entry.id, { savedLeg: normalizeDirection(leg, entry.savedLine) });
       return { ok: true, id: entry.id };
     }),
 
@@ -107,6 +107,15 @@ export default capsule({
 
       ctx.db.tripEntries.update(entry.id, { savedLine: normalizeLine(line) });
       return { ok: true, id: entry.id };
+    }),
+
+    migrateDirections: mutation((ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) {
+        return { ok: false, reason: "unauthorized" };
+      }
+
+      return { ok: true, updated: migrateDirectionRows(ctx, ownerIdsFor(ctx, viewer)) };
     }),
 
     deleteEntry: mutation((ctx, id) => {
@@ -168,6 +177,8 @@ export default capsule({
 
     shortcutLookupPost: endpoint({ method: "POST", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
 
+    shortcutMigrateDirectionsPost: endpoint({ method: "POST", path: "/api/shortcut/migrate-directions" }, (ctx, req) => migrateShortcutDirections(ctx, req)),
+
     apiEntryPost: endpoint({ method: "POST", path: "/api/entries" }, (ctx, req) => saveShortcutEntry(ctx, req))
   }
 });
@@ -226,6 +237,22 @@ function rowsForOwners(tableRef, ownerIds) {
   return rows;
 }
 
+function migrateDirectionRows(ctx, ownerIds) {
+  let updated = 0;
+  for (const entry of rowsForOwners(ctx.db.tripEntries, ownerIds)) {
+    const inferredLine = normalizeLine(entry.inferredLine);
+    const savedLine = normalizeLine(entry.savedLine);
+    const inferredLeg = normalizeDirection(entry.inferredLeg, inferredLine);
+    const savedLeg = normalizeDirection(entry.savedLeg, savedLine);
+    if (inferredLeg !== entry.inferredLeg || savedLeg !== entry.savedLeg) {
+      ctx.db.tripEntries.update(entry.id, { inferredLeg, savedLeg });
+      updated += 1;
+    }
+  }
+
+  return updated;
+}
+
 function prepareEntryRow(ctx, input, ownerId) {
   const vehicleNumber = normalizeVehicleNumber(input?.vehicleNumber ?? input?.vehicle ?? input?.number);
   if (!isValidVehicleNumber(vehicleNumber)) {
@@ -247,10 +274,10 @@ function prepareEntryRow(ctx, input, ownerId) {
   const point = location ? normalizeLocation(location) : null;
   const classification = classifyCapture(point, capturedAt);
   const locationStatus = cleanBounded(input?.locationStatus, 48) || (point ? "captured" : "unavailable");
-  const inferredLeg = normalizeLeg(input?.inferredLeg || classification.suggestedLeg);
-  const savedLeg = normalizeSavedLegOverride(input?.savedLeg ?? input?.leg, inferredLeg);
   const inferredLine = normalizeLine(input?.inferredLine || classification.suggestedLine);
   const savedLine = normalizeLine(input?.savedLine || input?.line || inferredLine);
+  const inferredLeg = normalizeDirection(input?.inferredDirection ?? input?.inferredLeg ?? classification.suggestedLeg, inferredLine, classification.suggestedLeg);
+  const savedLeg = normalizeSavedDirectionOverride(input?.customDirection || input?.savedDirection || input?.direction || input?.savedLeg || input?.leg, savedLine, inferredLeg);
 
   return {
     ok: true,
@@ -339,6 +366,20 @@ async function lookupShortcutEntry(ctx, req) {
     },
     jsonOptions(200)
   );
+}
+
+function migrateShortcutDirections(ctx, req) {
+  const auth = shortcutAuthorization(ctx, req);
+  if (!auth.ok) {
+    return json({ ok: false, reason: auth.reason }, jsonOptions(auth.status));
+  }
+
+  const ownerId = ownerKeyFor(ctx);
+  if (!ownerId) {
+    return json({ ok: false, reason: "allowed_email_missing" }, jsonOptions(503));
+  }
+
+  return json({ ok: true, updated: migrateDirectionRows(ctx, [ownerId]) }, jsonOptions(200));
 }
 
 function shortcutAuthorization(ctx, req) {
@@ -437,13 +478,13 @@ function cleanBounded(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
-function normalizeSavedLegOverride(value, inferredLeg) {
-  const leg = String(value ?? "").trim().toLowerCase();
-  if (!leg || leg === "auto" || leg === "detect" || leg === "detected") {
-    return normalizeLeg(inferredLeg);
+function normalizeSavedDirectionOverride(value, line, inferredDirection) {
+  const direction = String(value ?? "").trim().toLowerCase();
+  if (!direction || direction === "auto" || direction === "detect" || direction === "detected") {
+    return normalizeDirection(inferredDirection, line);
   }
 
-  return normalizeLeg(leg);
+  return normalizeDirection(value, line);
 }
 
 function normalizeIsoDate(value) {

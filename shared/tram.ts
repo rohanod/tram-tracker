@@ -5,6 +5,12 @@ export const LEG_VALUES = ["unclassified", "from_home", "to_school", "from_schoo
 export const MAIN_LINE_VALUES = ["12", "14", "17", "18"];
 export const LINE_VALUES = ["unclassified", ...MAIN_LINE_VALUES];
 export const OBSERVATION_VALUES = ["been_on", "seen"];
+export const DIRECTION_OPTIONS_BY_LINE = {
+  "12": ["Lancy-Bachet, Gare", "Thônex, Moillesulaz"],
+  "14": ["Bernex, Vailly", "Meyrin, Gravière"],
+  "17": ["Lancy-Pont-Rouge, Gare", "Annemasse, Parc Montessuit"],
+  "18": ["Grand-Lancy, Palettes", "Meyrin, CERN"]
+};
 
 export const LEG_LABELS = {
   unclassified: "No leg",
@@ -80,9 +86,74 @@ export function vehicleHistoryMessage(entry) {
   }
 
   const line = normalizeLine(entry.savedLine ?? entry.line);
-  const leg = normalizeLeg(entry.savedLeg ?? entry.leg);
+  const direction = normalizeDirection(entry.savedDirection ?? entry.direction ?? entry.savedLeg ?? entry.leg, line);
   const prefix = normalizeObservationType(entry.observationType) === "been_on" ? "Been on before" : "Seen before";
-  return prefix + ": " + lineLabelForMessage(line) + ", " + LEG_LABELS[leg] + ".";
+  const capturedAt = formatCapturedAtForMessage(entry.capturedAt);
+  const trip = lineLabelForMessage(line) + ", " + directionLabelForLine(line, direction);
+  return prefix + ": " + (capturedAt ? capturedAt + ", " : "") + trip + ".";
+}
+
+export function legLabelForLine(line, leg) {
+  return directionLabelForLine(line, leg);
+}
+
+export function directionLabelForLine(line, direction) {
+  const normalizedDirection = normalizeDirection(direction, line);
+  if (normalizedDirection === "unclassified") {
+    return "No direction";
+  }
+
+  return "To " + normalizedDirection;
+}
+
+export function normalizeDirection(value, line, fallback = "unclassified") {
+  const raw = String(value ?? "").trim();
+  const lower = raw.toLowerCase();
+  if (!raw || lower === "auto" || lower === "detect" || lower === "detected") {
+    return normalizeDirection(fallback, line);
+  }
+  if (lower === "none" || lower === "no direction" || lower === "unclassified") {
+    return "unclassified";
+  }
+  if (isKnownLeg(lower)) {
+    return headsignForLineAndLeg(line, lower) || normalizeLeg(lower);
+  }
+
+  const withoutPrefix = raw.replace(/^to\s+/i, "").replace(/\s+/g, " ").slice(0, 80).trim();
+  const configured = directionOptionsForLine(line).find((direction) => direction.toLowerCase() === withoutPrefix.toLowerCase());
+  return configured || withoutPrefix || "unclassified";
+}
+
+export function directionOptionsForLine(line) {
+  const normalizedLine = normalizeLine(line);
+  const configured = DIRECTION_OPTIONS_BY_LINE[normalizedLine] ?? [];
+  if (configured.length) {
+    return ["unclassified", ...configured];
+  }
+
+  const corridor = CORRIDORS.find((candidate) => candidate.line === normalizedLine);
+  const fallback = corridor?.points?.length
+    ? [stopHeadsign(corridor.points[0]?.name), stopHeadsign(corridor.points[corridor.points.length - 1]?.name)].filter(Boolean)
+    : [];
+  return ["unclassified", ...uniqueValues(fallback)];
+}
+
+export function headsignForLineAndLeg(line, leg) {
+  const normalizedLine = normalizeLine(line);
+  if (normalizedLine === "unclassified") {
+    return "";
+  }
+
+  const options = directionOptionsForLine(normalizedLine).filter((direction) => direction !== "unclassified");
+  const first = options[0] ?? "";
+  const last = options[options.length - 1] ?? "";
+  if (leg === "from_home" || leg === "from_school") {
+    return first;
+  }
+  if (leg === "to_home" || leg === "to_school") {
+    return last;
+  }
+  return "";
 }
 
 export function legValuesForCapturedAt(capturedAt) {
@@ -226,6 +297,28 @@ function uniqueValues(values) {
 
 function lineLabelForMessage(line) {
   return line === "unclassified" ? LINE_LABELS.unclassified : "Line " + line;
+}
+
+function formatCapturedAtForMessage(capturedAt) {
+  const date = new Date(capturedAt);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Zurich",
+    dateStyle: "medium",
+    timeStyle: "short",
+    hourCycle: "h23"
+  }).format(date);
+}
+
+function stopHeadsign(name) {
+  return String(name ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .pop() ?? "";
 }
 
 function isBeforeGenevaNoon(capturedAt) {
