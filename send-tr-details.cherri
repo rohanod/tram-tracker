@@ -16,9 +16,10 @@ action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
 }
 
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/save"
+const metadataURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/metadata"
+const metadata = jsonRequest(metadataURL)
 
 const typeChoices = list("been_on", "seen")
-const tripChoices = list("From Home - Tram 18 - Grand-Lancy, Palettes", "From Home - Tram 14 - Bernex, Vailly", "To School - Tram 17 - Annemasse, Parc Montessuit", "To School - Tram 12 - Thônex, Moillesulaz", "From School - Tram 17 - Lancy-Pont-Rouge, Gare", "From School - Tram 12 - Lancy-Bachet, Gare", "To Home - Tram 18 - Meyrin, CERN", "To Home - Tram 14 - Meyrin, Gravière", "Manual - no direction")
 
 @vehicleNumber = promptWholeNumber("Vehicle number")
 @vehicleNumberRemainder = @vehicleNumber % 1
@@ -36,41 +37,47 @@ if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0
     stop()
 }
 const observationType = chooseFromList(typeChoices, "Observation type")
-const trip = chooseFromList(tripChoices, "Trip")
 @line = "unclassified"
+@directionChoices = list("Custom direction", "unclassified")
+
+menu "Line" {
+    item "14":
+        @line = "14"
+        @directionChoices = getValue(metadata, "directions14")
+    item "18":
+        @line = "18"
+        @directionChoices = getValue(metadata, "directions18")
+    item "12":
+        @line = "12"
+        @directionChoices = getValue(metadata, "directions12")
+    item "17":
+        @line = "17"
+        @directionChoices = getValue(metadata, "directions17")
+    item "Other":
+        @line = prompt("Other line (1-3 letters/numbers)")
+        @lineMatches = matchText('^[A-Za-z0-9]{1,3}$', line)
+        repeat attempt for 10 {
+            if count(lineMatches) == 0 {
+                alert("Line must be 1-3 letters/numbers.", "Invalid line")
+                @line = prompt("Other line (1-3 letters/numbers)")
+                @lineMatches = matchText('^[A-Za-z0-9]{1,3}$', line)
+            }
+        }
+        if count(lineMatches) == 0 {
+            alert("Line must be 1-3 letters/numbers.", "Invalid line")
+            stop()
+        }
+        @directionChoices = list("Custom direction", "unclassified")
+}
+
+@selectedDirection = chooseFromList(directionChoices, "Direction")
 @direction = "unclassified"
 
-if trip == "From Home - Tram 18 - Grand-Lancy, Palettes" {
-    @line = "18"
-    @direction = "Grand-Lancy, Palettes"
+if selectedDirection == "Custom direction" {
+    @direction = prompt("Custom direction (optional)")
 }
-if trip == "From Home - Tram 14 - Bernex, Vailly" {
-    @line = "14"
-    @direction = "Bernex, Vailly"
-}
-if trip == "To School - Tram 17 - Annemasse, Parc Montessuit" {
-    @line = "17"
-    @direction = "Annemasse, Parc Montessuit"
-}
-if trip == "To School - Tram 12 - Thônex, Moillesulaz" {
-    @line = "12"
-    @direction = "Thônex, Moillesulaz"
-}
-if trip == "From School - Tram 17 - Lancy-Pont-Rouge, Gare" {
-    @line = "17"
-    @direction = "Lancy-Pont-Rouge, Gare"
-}
-if trip == "From School - Tram 12 - Lancy-Bachet, Gare" {
-    @line = "12"
-    @direction = "Lancy-Bachet, Gare"
-}
-if trip == "To Home - Tram 18 - Meyrin, CERN" {
-    @line = "18"
-    @direction = "Meyrin, CERN"
-}
-if trip == "To Home - Tram 14 - Meyrin, Gravière" {
-    @line = "14"
-    @direction = "Meyrin, Gravière"
+if selectedDirection != "Custom direction" {
+    @direction = selectedDirection
 }
 
 const now = currentDate()

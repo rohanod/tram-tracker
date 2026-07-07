@@ -1,6 +1,7 @@
 import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
 import {
   classifyCapture,
+  DIRECTION_OPTIONS_BY_LINE,
   isValidVehicleNumber,
   normalizeDirection,
   normalizeLine,
@@ -169,6 +170,26 @@ export default capsule({
       })
     ),
 
+    shortcutMetadata: endpoint({ method: "GET", path: "/api/shortcut/metadata" }, () =>
+      json(
+        {
+          ok: true,
+          lineChoices: ["14", "18", "12", "17", "Other"],
+          directions12: shortcutDirections("12"),
+          directions14: shortcutDirections("14"),
+          directions17: shortcutDirections("17"),
+          directions18: shortcutDirections("18"),
+          fallbackColors: {
+            "12": { color: "#f5a300", foreground: "#111111" },
+            "14": { color: "#5a1e82", foreground: "#ffffff" },
+            "17": { color: "#00ace7", foreground: "#111111" },
+            "18": { color: "#b82f89", foreground: "#ffffff" }
+          }
+        },
+        jsonOptions(200)
+      )
+    ),
+
     shortcutSaveGet: endpoint({ method: "GET", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
 
     shortcutSavePost: endpoint({ method: "POST", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
@@ -233,6 +254,10 @@ function rowsForOwners(tableRef, ownerIds) {
   }
 
   return rows;
+}
+
+function shortcutDirections(line) {
+  return [...(DIRECTION_OPTIONS_BY_LINE[line] ?? []).map((direction) => "To " + direction), "Custom direction"];
 }
 
 function migrateDirectionRows(ctx, ownerIds) {

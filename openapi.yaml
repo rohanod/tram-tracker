@@ -151,6 +151,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/shortcut/metadata:
+    get:
+      operationId: getShortcutMetadata
+      summary: Get shortcut line metadata
+      description: "Static line choices, headsign choices, and fallback colors for automation shortcuts."
+      responses:
+        "200":
+          description: Shortcut metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShortcutMetadataResponse"
 components:
   securitySchemes:
     ShortcutToken:
@@ -418,6 +430,42 @@ components:
             - invalid_vehicle_number
             - missing_client_entry_id
             - missing_owner
+    ShortcutMetadataResponse:
+      type: object
+      required:
+        - ok
+        - lineChoices
+        - directions12
+        - directions14
+        - directions17
+        - directions18
+        - fallbackColors
+      properties:
+        ok:
+          type: boolean
+          const: true
+        lineChoices:
+          type: array
+          items:
+            type: string
+        directions12:
+          type: array
+          items:
+            type: string
+        directions14:
+          type: array
+          items:
+            type: string
+        directions17:
+          type: array
+          items:
+            type: string
+        directions18:
+          type: array
+          items:
+            type: string
+        fallbackColors:
+          type: object
     Leg:
       type: string
       enum:
