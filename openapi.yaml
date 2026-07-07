@@ -151,35 +151,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/shortcut/migrate-directions:
-    post:
-      operationId: migrateShortcutDirections
-      summary: Migrate stored legacy legs to headsign directions
-      description: "Token-protected maintenance endpoint for converting legacy leg values to line-specific headsigns."
-      security:
-        - ShortcutToken: []
-      responses:
-        "200":
-          description: Migration complete.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - ok
-                  - updated
-                properties:
-                  ok:
-                    type: boolean
-                    const: true
-                  updated:
-                    type: number
-        "401":
-          description: Missing or invalid shortcut token.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     ShortcutToken:

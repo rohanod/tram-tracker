@@ -177,8 +177,6 @@ export default capsule({
 
     shortcutLookupPost: endpoint({ method: "POST", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
 
-    shortcutMigrateDirectionsPost: endpoint({ method: "POST", path: "/api/shortcut/migrate-directions" }, (ctx, req) => migrateShortcutDirections(ctx, req)),
-
     apiEntryPost: endpoint({ method: "POST", path: "/api/entries" }, (ctx, req) => saveShortcutEntry(ctx, req))
   }
 });
@@ -366,20 +364,6 @@ async function lookupShortcutEntry(ctx, req) {
     },
     jsonOptions(200)
   );
-}
-
-function migrateShortcutDirections(ctx, req) {
-  const auth = shortcutAuthorization(ctx, req);
-  if (!auth.ok) {
-    return json({ ok: false, reason: auth.reason }, jsonOptions(auth.status));
-  }
-
-  const ownerId = ownerKeyFor(ctx);
-  if (!ownerId) {
-    return json({ ok: false, reason: "allowed_email_missing" }, jsonOptions(503));
-  }
-
-  return json({ ok: true, updated: migrateDirectionRows(ctx, [ownerId]) }, jsonOptions(200));
 }
 
 function shortcutAuthorization(ctx, req) {
