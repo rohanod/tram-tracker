@@ -254,7 +254,9 @@ export function App() {
   }
 
   const styles = <style>{DESIGN_SYSTEM_CSS + APP_CSS}</style>;
-  if (window.location.pathname === "/upload-data") return <>{styles}<UploadDataPage authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
+  if (window.location.pathname === "/upload-data" || window.location.hash === "#/upload-data") {
+    return <>{styles}<UploadDataPage authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
+  }
   if (!canUseTracker) return <>{styles}<AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} /></>;
 
   return <>{styles}
