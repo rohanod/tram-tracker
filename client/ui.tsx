@@ -1,183 +1,99 @@
 import { SignInWithGoogle, signOut } from "lakebed/client";
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import type { LocationState, Viewer } from "./types";
 
-export function AuthGate({
-  authLoading,
-  viewer,
-  isOnline,
-  priorAuthorized,
-  cachedAccessAllowed
-}: {
-  authLoading: boolean;
-  viewer?: Viewer;
-  isOnline: boolean;
-  priorAuthorized: boolean;
-  cachedAccessAllowed: boolean;
-}) {
+let modalId = 0;
+
+export function AuthGate({ authLoading, viewer, isOnline, priorAuthorized }: { authLoading: boolean; viewer?: Viewer; isOnline: boolean; priorAuthorized: boolean }) {
+  let title = "Checking access";
+  let body = "Confirming the current session.";
   if (!isOnline && !priorAuthorized) {
-    return (
-      <section className="auth-panel">
-        <h2>Sign in online first</h2>
-        <p>This device needs one successful authorized Google sign-in before offline saving is available.</p>
-      </section>
-    );
+    title = "Sign in online first";
+    body = "This device needs one authorized Google sign-in before offline use.";
+  } else if (viewer && !viewer.hasAllowedEmail) {
+    title = "Allowlist missing";
+    body = "Set ALLOWED_EMAIL, then redeploy.";
+  } else if (viewer?.isGuest) {
+    title = "Private tracker";
+    body = "Sign in with the allowed Google account.";
+  } else if (viewer && !viewer.isAllowed) {
+    title = "Account not allowed";
+    body = viewer.email || "This Google account is not on the allowlist.";
   }
-
-  if (authLoading && !viewer) {
-    return (
-      <section className="auth-panel">
-        <h2>Checking access</h2>
-        <p>Confirming the current session.</p>
-        {cachedAccessAllowed ? (
-          <div className="auth-panel-actions">
-            <SignInWithGoogle className="primary-button auth-button" />
-          </div>
-        ) : null}
-      </section>
-    );
-  }
-
-  if (!viewer) {
-    return (
-      <section className="auth-panel">
-        <h2>Checking access</h2>
-        <p>Keeping the last allowed session active while access refreshes.</p>
-        <div className="auth-panel-actions">
-          <SignInWithGoogle className="primary-button auth-button" />
-        </div>
-      </section>
-    );
-  }
-
-  if (!viewer.hasAllowedEmail) {
-    return (
-      <section className="auth-panel">
-        <h2>Allowlist missing</h2>
-        <p>Set ALLOWED_EMAIL in .env.lakebed.server, then restart Lakebed.</p>
-      </section>
-    );
-  }
-
-  if (viewer.isGuest) {
-    return (
-      <section className="auth-panel">
-        <h2>Private saver</h2>
-        <p>Sign in with the allowed Google account to save tram vehicles.</p>
-        <div className="auth-panel-actions">
-          <SignInWithGoogle className="primary-button auth-button" />
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className="auth-panel">
-      <h2>Account not allowed</h2>
-      <p>{viewer.email || "This Google account"} is not on the allowlist.</p>
-      <div className="auth-panel-actions">
-        <button className="secondary-button" type="button" onClick={() => signOut()}>
-          Sign out
-        </button>
-        <SignInWithGoogle className="primary-button auth-button" />
-      </div>
-    </section>
+    <main className="auth-page">
+      <section className="auth-panel">
+        <p className="eyebrow">Vehicle Tracker</p>
+        <h1>{title}</h1>
+        <p>{body}</p>
+        {!authLoading && isOnline ? <SignInWithGoogle className="button primary" /> : null}
+        {viewer && !viewer.isGuest ? <button className="button secondary" type="button" onClick={() => signOut()}>Sign out</button> : null}
+      </section>
+    </main>
+  );
+}
+
+export function Modal({ title, subtitle, onClose, children, footer, className = "" }: { title: string; subtitle?: string; onClose: () => void; children: ComponentChildren; footer?: ComponentChildren; className?: string }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const titleId = useRef(`modal-title-${++modalId}`).current;
+  useEffect(() => {
+    returnFocus.current = document.activeElement as HTMLElement;
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLElement>("button, input, select")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); returnFocus.current?.focus(); };
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section ref={dialogRef} className={`modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="modal-header">
+          <div><h2 id={titleId}>{title}</h2>{subtitle ? <p>{subtitle}</p> : null}</div>
+          <button className="icon-button close-button" type="button" aria-label="Close" onClick={onClose}><CloseIcon /></button>
+        </header>
+        <div className="modal-body">{children}</div>
+        {footer ? <footer className="modal-footer">{footer}</footer> : null}
+      </section>
+    </div>
+  );
+}
+
+export function ConfirmDeleteDialog({ vehicleNumber, onCancel, onConfirm }: { vehicleNumber: string; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <Modal title="Delete saved entry?" subtitle={`Vehicle ${vehicleNumber} will be permanently removed. This can’t be undone.`} onClose={onCancel} className="confirm-modal" footer={<><button className="button secondary" type="button" onClick={onCancel}>Cancel</button><button className="button danger" type="button" onClick={onConfirm}>Delete</button></>}>
+      <span />
+    </Modal>
   );
 }
 
 export function LocationPermissionWarning({ location, onRetry }: { location: LocationState; onRetry: () => void }) {
-  if (location.status !== "denied" && location.status !== "unavailable") {
-    return null;
-  }
-
-  const isDenied = location.status === "denied";
-  return (
-    <div className={isDenied ? "location-warning denied" : "location-warning"} role="alert" aria-live="polite">
-      <div>
-        <strong>{isDenied ? "Location permission is off" : "Location is unavailable"}</strong>
-        <p>
-          {isDenied
-            ? "Route and direction defaults cannot be detected until location access is enabled for this site. You can still save manually."
-            : "The app could not get your current position. Check signal or try again; manual saving still works."}
-        </p>
-      </div>
-      <button className="secondary-button small-button" type="button" onClick={onRetry}>
-        Try again
-      </button>
-    </div>
-  );
+  if (location.status !== "denied" && location.status !== "unavailable") return null;
+  return <div className="inline-alert" role="alert"><span>{location.status === "denied" ? "Location permission is off." : "Location unavailable."}</span><button type="button" onClick={onRetry}>Try again</button></div>;
 }
 
 export function Toast({ message, onClose }: { message: string; onClose: () => void }) {
-  return (
-    <div className="toast" role="status" aria-live="polite">
-      <span>{message}</span>
-      <button type="button" aria-label="Dismiss message" onClick={onClose}>
-        x
-      </button>
-    </div>
-  );
+  return <div className="toast" role="status" aria-live="polite"><span>{message}</span><button className="icon-button" type="button" aria-label="Dismiss" onClick={onClose}><CloseIcon /></button></div>;
 }
 
-export function ConfirmDeleteDialog({
-  title,
-  body,
-  confirmLabel,
-  onCancel,
-  onConfirm
-}: {
-  title: string;
-  body: string;
-  confirmLabel: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onCancel]);
-
-  return (
-    <div className="modal-backdrop confirm-backdrop" role="presentation" onClick={onCancel}>
-      <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title" aria-describedby="confirm-delete-body" onClick={(event) => event.stopPropagation()}>
-        <div>
-          <h2 id="confirm-delete-title">{title}</h2>
-          <p className="subtle" id="confirm-delete-body">
-            {body}
-          </p>
-        </div>
-        <div className="confirm-actions">
-          <button className="secondary-button" type="button" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="danger-button solid" type="button" onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        </div>
-      </section>
-    </div>
-  );
+export function CloseIcon() {
+  return <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 }
 
-export function PageTabs({ appPage, className = "", disabled = false, onNavigate }: { appPage: string; className?: string; disabled?: boolean; onNavigate: (page: string) => void }) {
-  const tabs = [
-    { page: "saver", label: "Save", glyph: "+" },
-    { page: "saves", label: "Search", glyph: "?" }
-  ];
+export function SettingsIcon() {
+  return <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2V9.6h.4A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V2h4v.4A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 8.5a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.4v4h-.4A1.7 1.7 0 0 0 19.4 15Z"/></svg>;
+}
 
-  return (
-    <nav className={"app-tabs " + className} aria-label="Primary">
-      {tabs.map((tab) => (
-        <button className={appPage === tab.page ? "app-tab active" : "app-tab"} key={tab.page} type="button" aria-current={appPage === tab.page ? "page" : undefined} disabled={disabled} onClick={() => onNavigate(tab.page)}>
-          <span className="tab-glyph" aria-hidden="true">{tab.glyph}</span>
-          <span>{tab.label}{tab.badge ? " " + tab.badge : ""}</span>
-        </button>
-      ))}
-    </nav>
-  );
+export function SearchIcon() {
+  return <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>;
 }

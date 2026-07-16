@@ -24,7 +24,7 @@ npx lakebed dev .lakebed/dev-capsule --port 3000
 
 The app requires Google sign-in and only allows the email configured in `ALLOWED_EMAIL`.
 
-The mirror watcher copies only `client/`, `server/`, `shared/`, `lakebed.json`, and `.env.lakebed.server` into `.lakebed/dev-capsule`. This avoids Lakebed dev rebuilding when `.git` metadata changes in the project root.
+The mirror watcher copies only `client/`, `server/`, `shared/`, `storage-data/`, `lakebed.json`, and `.env.lakebed.server` into `.lakebed/dev-capsule`. This avoids Lakebed dev rebuilding when `.git` metadata changes in the project root.
 
 The dev mirror also disables PWA static endpoints and service-worker registration locally. The root capsule still serves the manifest/service worker/icon on deploy; this local-only transform avoids a Lakebed dev crash after static endpoint requests.
 

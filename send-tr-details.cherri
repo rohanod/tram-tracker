@@ -2,6 +2,7 @@
 #include 'actions/location'
 #include 'actions/calendar'
 #include 'actions/text'
+#include 'shortcut-line-metadata.cherri'
 
 #define color orange
 #define glyph tram
@@ -16,8 +17,6 @@ action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
 }
 
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/save"
-const metadataURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/metadata"
-const metadata = jsonRequest(metadataURL)
 
 const typeChoices = list("been_on", "seen")
 
@@ -38,46 +37,49 @@ if @vehicleNumber < 100 || @vehicleNumber > 9999 || @vehicleNumberRemainder != 0
 }
 const observationType = chooseFromList(typeChoices, "Observation type")
 @line = "unclassified"
-@directionChoices = list("Custom direction", "unclassified")
 
 menu "Line" {
     item "14":
         @line = "14"
-        @directionChoices = getValue(metadata, "directions14")
     item "18":
         @line = "18"
-        @directionChoices = getValue(metadata, "directions18")
     item "12":
         @line = "12"
-        @directionChoices = getValue(metadata, "directions12")
     item "17":
         @line = "17"
-        @directionChoices = getValue(metadata, "directions17")
     item "Other":
-        @line = prompt("Other line (1-3 letters/numbers)")
-        @lineMatches = matchText('^[A-Za-z0-9]{1,3}$', line)
-        repeat attempt for 10 {
-            if count(lineMatches) == 0 {
-                alert("Line must be 1-3 letters/numbers.", "Invalid line")
-                @line = prompt("Other line (1-3 letters/numbers)")
-                @lineMatches = matchText('^[A-Za-z0-9]{1,3}$', line)
-            }
-        }
-        if count(lineMatches) == 0 {
-            alert("Line must be 1-3 letters/numbers.", "Invalid line")
-            stop()
-        }
-        @directionChoices = list("Custom direction", "unclassified")
+        @line = prompt("Official TPG line")
 }
 
-@selectedDirection = chooseFromList(directionChoices, "Direction")
-@direction = "unclassified"
-
-if selectedDirection == "Custom direction" {
-    @direction = prompt("Custom direction (optional)")
+@directionChoices = getValue(officialLineDirections, @line)
+@directionCount = count(@directionChoices)
+repeat attempt for 10 {
+    if @directionCount == 0 {
+        alert("Enter an official TPG line.", "Unknown line")
+        @line = prompt("Official TPG line")
+        @directionChoices = getValue(officialLineDirections, @line)
+        @directionCount = count(@directionChoices)
+    }
 }
-if selectedDirection != "Custom direction" {
-    @direction = selectedDirection
+if @directionCount == 0 {
+    alert("The line was not found in the embedded TPG data.", "Unknown line")
+    stop()
+}
+
+const directionChoice = chooseFromList(@directionChoices, "Direction")
+const direction = getText(directionChoice)
+@customDirection = ""
+if direction == "Other" {
+    @customDirection = prompt("Custom direction")
+    repeat attempt for 10 {
+        if @customDirection == "" {
+            alert("Enter a direction.", "Direction required")
+            @customDirection = prompt("Custom direction")
+        }
+    }
+    if @customDirection == "" {
+        stop()
+    }
 }
 
 const now = currentDate()
@@ -90,7 +92,8 @@ const response = jsonRequest(apiURL, "POST", {
     "vehicleNumber": "{@vehicleNumber}",
     "line": "{@line}",
     "type": "{observationType}",
-    "direction": "{@direction}",
+    "direction": "{direction}",
+    "customDirection": "{customDirection}",
     "capturedAt": "{capturedAt}",
     "lat": "{lat}",
     "lon": "{lon}"

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Vehicle Tracker API
   version: 1.0.0
-  description: Token-protected API for saving tram vehicle observations from automation shortcuts.
+  description: Token-protected API for saving transit vehicle observations and checking vehicle history from automation shortcuts.
 servers:
   - url: https://rapid-signal-1f4a040df6.lakebed.app
     description: Lakebed production app
@@ -11,7 +11,7 @@ paths:
     post:
       operationId: saveTripEntry
       summary: Save a trip entry
-      description: "Saves or updates a tram vehicle observation. Provide `clientEntryId` for idempotent retries."
+      description: "Saves or updates a transit vehicle observation. Provide `clientEntryId` for idempotent retries."
       security:
         - ShortcutToken: []
       requestBody:
@@ -151,18 +151,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/shortcut/metadata:
+  /api/shortcut/lookup:
     get:
-      operationId: getShortcutMetadata
-      summary: Get shortcut line metadata
-      description: "Static line choices, headsign choices, and fallback colors for automation shortcuts."
+      operationId: lookupVehicleHistoryFromQuery
+      summary: Look up vehicle history from query parameters
+      description: Returns the latest saved history message for a vehicle, or an empty message when it has not been saved before.
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+        - $ref: "#/components/parameters/VehicleNumberQuery"
+      security:
+        - ShortcutToken: []
+        - TokenQuery: []
       responses:
         "200":
-          description: Shortcut metadata.
+          description: Vehicle history lookup completed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ShortcutMetadataResponse"
+                $ref: "#/components/schemas/LookupEntryResponse"
+        "400":
+          description: Invalid vehicle number.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: lookupVehicleHistory
+      summary: Look up vehicle history
+      description: Returns the latest saved history message for a vehicle, or an empty message when it has not been saved before.
+      security:
+        - ShortcutToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LookupEntryRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/LookupEntryRequest"
+      responses:
+        "200":
+          description: Vehicle history lookup completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LookupEntryResponse"
+        "400":
+          description: Invalid vehicle number.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid shortcut token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     ShortcutToken:
@@ -198,7 +262,7 @@ components:
       schema:
         type: string
         pattern: "^\\d{3,4}$"
-      description: "Tram vehicle number. Aliases accepted by the server include `vehicle`, `number`, and `v`."
+      description: "Transit vehicle number. Aliases accepted by the server include `vehicle` and `number`."
     LatitudeQuery:
       name: lat
       in: query
@@ -274,7 +338,7 @@ components:
         vehicleNumber:
           type: string
           pattern: "^\\d{3,4}$"
-          description: Tram vehicle number as 3 or 4 digits.
+          description: Transit vehicle number as 3 or 4 digits.
         vehicle:
           type: string
           pattern: "^\\d{3,4}$"
@@ -349,6 +413,7 @@ components:
         nearestStopName:
           type: string
           maxLength: 120
+          description: Optional manual place or result of an explicit nearest-stop lookup. The server does not derive it automatically.
     SaveEntryResponse:
       type: object
       required:
@@ -412,6 +477,40 @@ components:
         message:
           type: string
           description: Previous vehicle history message, including prior date, time, line, and direction when available.
+    LookupEntryRequest:
+      type: object
+      additionalProperties: true
+      required:
+        - vehicleNumber
+      properties:
+        vehicleNumber:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: Transit vehicle number as 3 or 4 digits.
+        vehicle:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: "Alias for `vehicleNumber`."
+        number:
+          type: string
+          pattern: "^\\d{3,4}$"
+          description: "Alias for `vehicleNumber`."
+    LookupEntryResponse:
+      type: object
+      required:
+        - ok
+        - vehicleNumber
+        - message
+      properties:
+        ok:
+          type: boolean
+          const: true
+        vehicleNumber:
+          type: string
+          pattern: "^\\d{3,4}$"
+        message:
+          type: string
+          description: Latest Been on before or Seen before message. Empty when no prior entry exists.
     ErrorResponse:
       type: object
       required:
@@ -430,42 +529,6 @@ components:
             - invalid_vehicle_number
             - missing_client_entry_id
             - missing_owner
-    ShortcutMetadataResponse:
-      type: object
-      required:
-        - ok
-        - lineChoices
-        - directions12
-        - directions14
-        - directions17
-        - directions18
-        - fallbackColors
-      properties:
-        ok:
-          type: boolean
-          const: true
-        lineChoices:
-          type: array
-          items:
-            type: string
-        directions12:
-          type: array
-          items:
-            type: string
-        directions14:
-          type: array
-          items:
-            type: string
-        directions17:
-          type: array
-          items:
-            type: string
-        directions18:
-          type: array
-          items:
-            type: string
-        fallbackColors:
-          type: object
     Leg:
       type: string
       enum:

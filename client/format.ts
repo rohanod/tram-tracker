@@ -1,6 +1,9 @@
 import { classifyCapture, LEG_LABELS, MAIN_LINE_VALUES, directionOptionsForLine, legLabelForLine, normalizeDirection, normalizeLine } from "../shared/tram";
 import type { LineInfo, LocalEntry, LocationState, MapPoint, Viewer } from "./types";
 
+const MIN_REVIEW_MAP_ZOOM = 12;
+const MAX_REVIEW_MAP_ZOOM = 18;
+
 export const DEFAULT_LINE_CATALOG: Record<string, LineInfo> = {
   "12": { line: "12", color: "#f5a300", foreground: "#111111", type: "Tramways", link: "" },
   "14": { line: "14", color: "#5a1e82", foreground: "#ffffff", type: "Tramways", link: "" },
@@ -19,7 +22,6 @@ const LINE_FOREGROUNDS: Record<string, string> = {
   "17": "#111111",
   "18": "#ffffff"
 };
-const CDN_LINE_DATA_URL = "https://cdn.jsdelivr.net/gh/rohanod/tram-tracker@main/cdn/tpg-lines-v1.json";
 
 export function lineColor(line: string, catalog: Record<string, LineInfo> = DEFAULT_LINE_CATALOG) {
   const normalized = normalizeLine(line);
@@ -28,7 +30,23 @@ export function lineColor(line: string, catalog: Record<string, LineInfo> = DEFA
 
 export function lineForeground(line: string, catalog: Record<string, LineInfo> = DEFAULT_LINE_CATALOG) {
   const normalized = normalizeLine(line);
-  return catalog[normalized]?.foreground ?? LINE_FOREGROUNDS[normalized] ?? "#ffffff";
+  const background = lineColor(normalized, catalog);
+  const preferred = catalog[normalized]?.foreground ?? LINE_FOREGROUNDS[normalized];
+  if (preferred && contrastRatio(background, preferred) >= 4.5) return preferred;
+  return contrastRatio(background, "#111111") >= contrastRatio(background, "#ffffff") ? "#111111" : "#ffffff";
+}
+
+function contrastRatio(a: string, b: string) {
+  const light = Math.max(luminance(a), luminance(b));
+  const dark = Math.min(luminance(a), luminance(b));
+  return (light + .05) / (dark + .05);
+}
+
+function luminance(hex: string) {
+  const value = /^#([0-9a-f]{6})$/i.exec(hex)?.[1];
+  if (!value) return 0;
+  const channels = [0, 2, 4].map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255).map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+  return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
 }
 
 export function lineLabel(line: string) {
@@ -40,31 +58,6 @@ export function lineLabel(line: string) {
   return "Line " + normalized;
 }
 
-export async function loadLineCatalog(): Promise<Record<string, LineInfo>> {
-  const response = await fetch(CDN_LINE_DATA_URL, { cache: "force-cache" });
-  if (!response.ok) {
-    throw new Error("Line data HTTP " + response.status);
-  }
-
-  const data = await response.json();
-  const catalog: Record<string, LineInfo> = { ...DEFAULT_LINE_CATALOG };
-
-  for (const entry of Array.isArray(data?.lines) ? data.lines : []) {
-    const line = normalizeLine(entry?.l);
-    if (line !== "unclassified") {
-      catalog[line] = {
-        line,
-        color: normalizeHexColor(entry?.c) || lineColor(line),
-        foreground: normalizeHexColor(entry?.f) || lineForeground(line),
-        type: String(entry?.t ?? ""),
-        link: String(entry?.u ?? "")
-      };
-    }
-  }
-
-  return catalog;
-}
-
 export function compareTransitLines(a: string, b: string) {
   const mainA = MAIN_LINE_VALUES.indexOf(a);
   const mainB = MAIN_LINE_VALUES.indexOf(b);
@@ -73,11 +66,6 @@ export function compareTransitLines(a: string, b: string) {
   }
 
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-}
-
-function normalizeHexColor(value: unknown) {
-  const color = String(value ?? "").trim();
-  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : "";
 }
 
 export function locationText(location: LocationState, classification: ReturnType<typeof classifyCapture>) {
@@ -227,7 +215,7 @@ export function requestLocation(setLocation: (location: LocationState) => void) 
       });
     },
     (err) => setLocation({ status: err.code === err.PERMISSION_DENIED ? "denied" : "unavailable" }),
-    { enableHighAccuracy: true, maximumAge: 30000, timeout: 9000 }
+    { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
   );
 }
 
@@ -240,7 +228,7 @@ export function installPwaAssets() {
 
     const theme = document.createElement("meta");
     theme.name = "theme-color";
-    theme.content = "#4367a1";
+    theme.content = "#ffffff";
     document.head.appendChild(theme);
   }
 

@@ -1,7 +1,6 @@
 import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
 import {
   classifyCapture,
-  DIRECTION_OPTIONS_BY_LINE,
   isValidVehicleNumber,
   normalizeDirection,
   normalizeLine,
@@ -13,6 +12,7 @@ import {
 } from "../shared/tram";
 
 const APP_NAME = "tram-tracker";
+const DEFAULT_LINES = ["14", "18", "12", "17"];
 
 export default capsule({
   name: APP_NAME,
@@ -37,25 +37,55 @@ export default capsule({
       nearestStopName: string(),
       ownerId: string()
     })
+      .index("by_owner", ["ownerId"])
+      .index("by_owner_client", ["ownerId", "clientEntryId"])
+      .index("by_owner_vehicle", ["ownerId", "vehicleNumber"]),
+    userSettings: table({
+      ownerId: string(),
+      defaultLines: string()
+    }).index("by_owner", ["ownerId"]),
+    transitData: table({
+      ownerId: string(),
+      version: string(),
+      metadataKey: string(),
+      metadataUrl: string(),
+      metadataSize: string(),
+      geometryKey: string(),
+      geometryUrl: string(),
+      geometrySize: string()
+    }).index("by_owner", ["ownerId"])
   },
 
   queries: {
     viewer: query((ctx) => viewerFor(ctx)),
 
-    entries: query((ctx) => {
+    entries: query(async (ctx) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return [];
       }
 
-      return rowsForOwners(ctx.db.tripEntries, ownerIdsFor(ctx, viewer))
-        .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)))
-        .slice(0, 80);
+      return (await rowsForOwners(ctx.db.tripEntries, ownerIdsFor(ctx, viewer)))
+        .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)));
+    }),
+
+    settings: query(async (ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { defaultLines: DEFAULT_LINES };
+      const row = await firstForOwners(ctx.db.userSettings, ownerIdsFor(ctx, viewer));
+      return { defaultLines: parseDefaultLines(row?.defaultLines) };
+    }),
+
+    transitData: query(async (ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return null;
+      const row = await firstForOwners(ctx.db.transitData, ownerIdsFor(ctx, viewer));
+      return row ? transitDataResponse(row) : null;
     })
   },
 
   mutations: {
-    saveEntry: mutation((ctx, input) => {
+    saveEntry: mutation(async (ctx, input) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
@@ -66,79 +96,107 @@ export default capsule({
         return prepared;
       }
 
-      const existing = ctx.db.tripEntries
-        .where("clientEntryId", prepared.clientEntryId)
-        .all()
-        .find((entry) => ownsRow(ctx, viewer, entry));
+      const existing = await entryByClientId(ctx, ownerIdsFor(ctx, viewer), prepared.clientEntryId);
 
       if (existing) {
-        ctx.db.tripEntries.update(existing.id, prepared.row);
+        await ctx.db.tripEntries.update(existing.id, prepared.row);
         return { ok: true, id: existing.id };
       }
 
-      const inserted = ctx.db.tripEntries.insert(prepared.row);
+      const inserted = await ctx.db.tripEntries.insert(prepared.row);
       return { ok: true, id: inserted?.id ?? "" };
     }),
 
-    updateEntryLeg: mutation((ctx, id, leg) => {
+    updateEntryLeg: mutation(async (ctx, id, leg) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
       }
 
-      const entry = ctx.db.tripEntries.get(String(id ?? ""));
+      const entry = await ctx.db.tripEntries.get(String(id ?? ""));
       if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
-      ctx.db.tripEntries.update(entry.id, { savedLeg: normalizeDirection(leg, entry.savedLine) });
+      await ctx.db.tripEntries.update(entry.id, { savedLeg: normalizeDirection(leg, entry.savedLine) });
       return { ok: true, id: entry.id };
     }),
 
-    updateEntryLine: mutation((ctx, id, line) => {
+    updateEntryLine: mutation(async (ctx, id, line) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
       }
 
-      const entry = ctx.db.tripEntries.get(String(id ?? ""));
+      const entry = await ctx.db.tripEntries.get(String(id ?? ""));
       if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
-      ctx.db.tripEntries.update(entry.id, { savedLine: normalizeLine(line) });
+      await ctx.db.tripEntries.update(entry.id, { savedLine: normalizeLine(line) });
       return { ok: true, id: entry.id };
     }),
 
-    migrateDirections: mutation((ctx) => {
+    migrateDirections: mutation(async (ctx) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
       }
 
-      return { ok: true, updated: migrateDirectionRows(ctx, ownerIdsFor(ctx, viewer)) };
+      return { ok: true, updated: await migrateDirectionRows(ctx, ownerIdsFor(ctx, viewer)) };
     }),
 
-    deleteEntry: mutation((ctx, id) => {
+    deleteEntry: mutation(async (ctx, id) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
       }
 
       const idOrClientEntryId = String(id ?? "");
-      const entry =
-        ctx.db.tripEntries.get(idOrClientEntryId) ||
-        ctx.db.tripEntries
-          .where("clientEntryId", idOrClientEntryId)
-          .all()
-          .find((candidate) => ownsRow(ctx, viewer, candidate));
+      const byId = await ctx.db.tripEntries.get(idOrClientEntryId);
+      const entry = byId || await entryByClientId(ctx, ownerIdsFor(ctx, viewer), idOrClientEntryId);
 
       if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
       }
 
-      ctx.db.tripEntries.delete(entry.id);
+      await ctx.db.tripEntries.delete(entry.id);
       return { ok: true, id: entry.id };
+    }),
+
+    saveSettings: mutation(async (ctx, input) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
+      const defaultLines = normalizeDefaultLines(input?.defaultLines);
+      if (!defaultLines) return { ok: false, reason: "invalid_default_lines" };
+      const ownerId = primaryOwnerIdFor(ctx, viewer);
+      const existing = await ctx.db.userSettings
+        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+        .first();
+      if (existing) {
+        await ctx.db.userSettings.update(existing.id, { defaultLines: JSON.stringify(defaultLines) });
+      } else {
+        await ctx.db.userSettings.insert({ ownerId, defaultLines: JSON.stringify(defaultLines) });
+      }
+      return { ok: true, defaultLines };
+    }),
+
+    activateTransitData: mutation(async (ctx, input) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
+      const next = normalizeTransitDataInput(input);
+      if (!next) return { ok: false, reason: "invalid_transit_data" };
+      const ownerId = primaryOwnerIdFor(ctx, viewer);
+      const existing = await ctx.db.transitData
+        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+        .first();
+      const previous = existing ? transitDataResponse(existing) : null;
+      if (existing) {
+        await ctx.db.transitData.update(existing.id, { ownerId, ...next });
+      } else {
+        await ctx.db.transitData.insert({ ownerId, ...next });
+      }
+      return { ok: true, previous, current: next };
     })
   },
 
@@ -168,26 +226,6 @@ export default capsule({
           "Cache-Control": "public, max-age=86400"
         }
       })
-    ),
-
-    shortcutMetadata: endpoint({ method: "GET", path: "/api/shortcut/metadata" }, () =>
-      json(
-        {
-          ok: true,
-          lineChoices: ["14", "18", "12", "17", "Other"],
-          directions12: shortcutDirections("12"),
-          directions14: shortcutDirections("14"),
-          directions17: shortcutDirections("17"),
-          directions18: shortcutDirections("18"),
-          fallbackColors: {
-            "12": { color: "#f5a300", foreground: "#111111" },
-            "14": { color: "#5a1e82", foreground: "#ffffff" },
-            "17": { color: "#00ace7", foreground: "#111111" },
-            "18": { color: "#b82f89", foreground: "#ffffff" }
-          }
-        },
-        jsonOptions(200)
-      )
     ),
 
     shortcutSaveGet: endpoint({ method: "GET", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
@@ -237,12 +275,15 @@ function ownsRow(ctx, viewer, row) {
   return Boolean(row && ownerIdsFor(ctx, viewer).includes(String(row.ownerId ?? "")));
 }
 
-function rowsForOwners(tableRef, ownerIds) {
+async function rowsForOwners(tableRef, ownerIds) {
   const seen = new Set();
   const rows = [];
 
   for (const ownerId of ownerIds) {
-    for (const row of tableRef.where("ownerId", ownerId).all()) {
+    const ownerRows = await tableRef
+      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+      .collect();
+    for (const row of ownerRows) {
       const id = String(row.id ?? row.clientEntryId ?? "");
       if (seen.has(id)) {
         continue;
@@ -256,24 +297,101 @@ function rowsForOwners(tableRef, ownerIds) {
   return rows;
 }
 
-function shortcutDirections(line) {
-  return [...(DIRECTION_OPTIONS_BY_LINE[line] ?? []).map((direction) => "To " + direction), "Custom direction"];
+async function firstForOwners(tableRef, ownerIds) {
+  for (const ownerId of ownerIds) {
+    const row = await tableRef
+      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+      .order("desc")
+      .first();
+    if (row) return row;
+  }
+  return null;
 }
 
-function migrateDirectionRows(ctx, ownerIds) {
+async function entryByClientId(ctx, ownerIds, clientEntryId) {
+  for (const ownerId of ownerIds) {
+    const entry = await ctx.db.tripEntries
+      .withIndex("by_owner_client", (q) => q.eq("ownerId", ownerId).eq("clientEntryId", clientEntryId))
+      .first();
+    if (entry) return entry;
+  }
+  return null;
+}
+
+async function migrateDirectionRows(ctx, ownerIds) {
   let updated = 0;
-  for (const entry of rowsForOwners(ctx.db.tripEntries, ownerIds)) {
+  for (const entry of await rowsForOwners(ctx.db.tripEntries, ownerIds)) {
     const inferredLine = normalizeLine(entry.inferredLine);
     const savedLine = normalizeLine(entry.savedLine);
     const inferredLeg = normalizeDirection(entry.inferredLeg, inferredLine);
     const savedLeg = normalizeDirection(entry.savedLeg, savedLine);
     if (inferredLeg !== entry.inferredLeg || savedLeg !== entry.savedLeg) {
-      ctx.db.tripEntries.update(entry.id, { inferredLeg, savedLeg });
+      await ctx.db.tripEntries.update(entry.id, { inferredLeg, savedLeg });
       updated += 1;
     }
   }
 
   return updated;
+}
+
+function parseDefaultLines(value) {
+  try {
+    return normalizeDefaultLines(JSON.parse(String(value ?? ""))) ?? DEFAULT_LINES;
+  } catch {
+    return DEFAULT_LINES;
+  }
+}
+
+function normalizeDefaultLines(value) {
+  if (!Array.isArray(value) || value.length > 4) return null;
+  const lines = value.map(normalizeLine);
+  if (lines.some((line) => line === "unclassified") || new Set(lines).size !== lines.length) return null;
+  return lines;
+}
+
+function normalizeTransitDataInput(input) {
+  const version = cleanBounded(input?.version, 80);
+  const metadataKey = cleanStorageKey(input?.metadataKey);
+  const metadataUrl = cleanStorageUrl(input?.metadataUrl, metadataKey);
+  const geometryKey = cleanStorageKey(input?.geometryKey);
+  const geometryUrl = cleanStorageUrl(input?.geometryUrl, geometryKey);
+  const metadataSize = cleanSize(input?.metadataSize);
+  const geometrySize = cleanSize(input?.geometrySize);
+  if (!version || !metadataKey || !metadataUrl || !geometryKey || !geometryUrl || !metadataSize || !geometrySize) return null;
+  return { version, metadataKey, metadataUrl, metadataSize, geometryKey, geometryUrl, geometrySize };
+}
+
+function cleanStorageKey(value) {
+  const key = cleanBounded(value, 160);
+  return /^public\/[A-Za-z0-9_-]+$/.test(key) ? key : "";
+}
+
+function cleanStorageUrl(value, key) {
+  const url = cleanBounded(value, 500);
+  try {
+    const parsed = new URL(url);
+    const localHttp = parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+    return (parsed.protocol === "https:" || localHttp) && parsed.pathname === "/storage/" + key ? url : "";
+  } catch {
+    return "";
+  }
+}
+
+function cleanSize(value) {
+  const size = Number(value);
+  return Number.isInteger(size) && size > 0 && size <= 5 * 1024 * 1024 ? String(size) : "";
+}
+
+function transitDataResponse(row) {
+  return {
+    version: String(row.version ?? ""),
+    metadataKey: String(row.metadataKey ?? ""),
+    metadataUrl: String(row.metadataUrl ?? ""),
+    metadataSize: Number(row.metadataSize ?? 0),
+    geometryKey: String(row.geometryKey ?? ""),
+    geometryUrl: String(row.geometryUrl ?? ""),
+    geometrySize: Number(row.geometrySize ?? 0)
+  };
 }
 
 function prepareEntryRow(ctx, input, ownerId) {
@@ -295,7 +413,7 @@ function prepareEntryRow(ctx, input, ownerId) {
   const savedAt = normalizeIsoDate(input?.savedAt || capturedAt);
   const location = locationFromInput(input);
   const point = location ? normalizeLocation(location) : null;
-  const classification = classifyCapture(point, capturedAt);
+  const classification = classifyCapture(point, capturedAt, false);
   const locationStatus = cleanBounded(input?.locationStatus, 48) || (point ? "captured" : "unavailable");
   const inferredLine = normalizeLine(input?.inferredLine || classification.suggestedLine);
   const savedLine = normalizeLine(input?.savedLine || input?.line || inferredLine);
@@ -322,7 +440,7 @@ function prepareEntryRow(ctx, input, ownerId) {
       savedLine,
       routeGroup: cleanBounded(input?.routeGroup, 48) || classification.routeGroup || "none",
       distanceMeters: cleanBounded(input?.distanceMeters, 24) || String(classification.distanceMeters ?? ""),
-      nearestStopName: cleanBounded(input?.nearestStopName, 120) || String(classification.nearestStopName ?? ""),
+      nearestStopName: cleanBounded(input?.nearestStopName, 120),
       ownerId
     }
   };
@@ -348,19 +466,18 @@ async function saveShortcutEntry(ctx, req) {
   if (!prepared.ok) {
     return json({ ok: false, reason: prepared.reason }, jsonOptions(400));
   }
-  const priorEntry = latestVehicleEntry(ctx, ownerId, prepared.row.vehicleNumber, prepared.clientEntryId);
+  const priorEntry = await latestVehicleEntry(ctx, ownerId, prepared.row.vehicleNumber, prepared.clientEntryId);
 
-  const existing = ctx.db.tripEntries
-    .where("clientEntryId", prepared.clientEntryId)
-    .all()
-    .find((entry) => entry.ownerId === ownerId);
+  const existing = await ctx.db.tripEntries
+    .withIndex("by_owner_client", (q) => q.eq("ownerId", ownerId).eq("clientEntryId", prepared.clientEntryId))
+    .first();
 
   if (existing) {
-    ctx.db.tripEntries.update(existing.id, prepared.row);
+    await ctx.db.tripEntries.update(existing.id, prepared.row);
     return json(shortcutEntryResponse(existing.id, prepared, priorEntry), jsonOptions(200));
   }
 
-  const inserted = ctx.db.tripEntries.insert(prepared.row);
+  const inserted = await ctx.db.tripEntries.insert(prepared.row);
   return json(shortcutEntryResponse(inserted?.id ?? "", prepared, priorEntry), jsonOptions(201));
 }
 
@@ -385,7 +502,7 @@ async function lookupShortcutEntry(ctx, req) {
     {
       ok: true,
       vehicleNumber,
-      message: vehicleHistoryMessage(latestVehicleEntry(ctx, ownerId, vehicleNumber, ""))
+      message: vehicleHistoryMessage(await latestVehicleEntry(ctx, ownerId, vehicleNumber, ""))
     },
     jsonOptions(200)
   );
@@ -458,15 +575,12 @@ function shortcutEntryResponse(id, prepared, priorEntry) {
   };
 }
 
-function latestVehicleEntry(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
-  return ctx.db.tripEntries
-    .where("ownerId", ownerId)
-    .all()
-    .filter(
-      (entry) =>
-        String(entry.vehicleNumber ?? "") === vehicleNumber &&
-        String(entry.clientEntryId ?? "") !== String(excludedClientEntryId ?? "")
-    )
+async function latestVehicleEntry(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
+  const entries = await ctx.db.tripEntries
+    .withIndex("by_owner_vehicle", (q) => q.eq("ownerId", ownerId).eq("vehicleNumber", vehicleNumber))
+    .collect();
+  return entries
+    .filter((entry) => String(entry.clientEntryId ?? "") !== String(excludedClientEntryId ?? ""))
     .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)))[0];
 }
 
@@ -560,7 +674,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.allSettled(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });

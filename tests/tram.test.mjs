@@ -11,7 +11,11 @@ async function loadSharedModule() {
   const tram = await readFile(new URL("tram.ts", root), "utf8");
   await writeFile(join(dir, "corridors.mjs"), corridors);
   await writeFile(join(dir, "tram.mjs"), tram.replace("./corridors", "./corridors.mjs"));
-  return import("file://" + join(dir, "tram.mjs"));
+  const [tramModule, corridorModule] = await Promise.all([
+    import("file://" + join(dir, "tram.mjs")),
+    import("file://" + join(dir, "corridors.mjs"))
+  ]);
+  return { ...tramModule, setTransitData: corridorModule.setTransitData };
 }
 
 async function loadSyncModule() {
@@ -63,92 +67,44 @@ test("vehicle numbers and directions normalize", async () => {
   assert.equal(normalizeDirection("Lancy-Bachet, gare", "12"), "Lancy-Bachet, Gare");
   assert.equal(normalizeDirection("To CERN", "18"), "CERN");
   assert.equal(legLabelForLine("14", "from_home"), "To Bernex, Vailly");
-  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "seen", capturedAt: "2026-06-17T06:30:00.000Z" }), "Seen before: 17 Jun 2026, 08:30, Line 14, To Bernex, Vailly.");
-  assert.equal(vehicleHistoryMessage({ savedLine: "18", direction: "Grand-Lancy, Palettes", observationType: "been_on", capturedAt: "2026-06-17T14:45:00.000Z" }), "Been on before: 17 Jun 2026, 16:45, Line 18, To Grand-Lancy, Palettes.");
+  assert.equal(vehicleHistoryMessage({ savedLine: "14", savedLeg: "from_home", observationType: "seen", capturedAt: "2026-06-17T06:30:00.000Z" }), "Seen before: 17 Jun 2026 at 08:30, Line 14, To Bernex, Vailly.");
+  assert.equal(vehicleHistoryMessage({ savedLine: "18", direction: "Grand-Lancy, Palettes", observationType: "been_on", capturedAt: "2026-06-17T14:45:00.000Z" }), "Been on before: 17 Jun 2026 at 16:45, Line 18, To Grand-Lancy, Palettes.");
 });
 
-test("route classification applies Geneva noon rules", async () => {
-  const { classifyCapture } = await loadSharedModule();
-
-  const homeBefore = classifyCapture({ lat: 46.22204, lon: 6.097272 }, "2026-06-11T07:30:00.000Z");
-  assert.equal(homeBefore.suggestedLeg, "from_home");
-  assert.equal(homeBefore.routeGroup, "home_14_18");
-  assert.equal(homeBefore.suggestedLine, "unclassified");
-  assert.deepEqual([...homeBefore.matchingLines].sort(), ["14", "18"]);
-
-  const homeAfter = classifyCapture({ lat: 46.22204, lon: 6.097272 }, "2026-06-11T12:30:00.000Z");
-  assert.equal(homeAfter.suggestedLeg, "to_home");
-
-  const schoolBefore = classifyCapture({ lat: 46.199524, lon: 6.17492 }, "2026-06-11T07:30:00.000Z");
-  assert.equal(schoolBefore.suggestedLeg, "to_school");
-  assert.equal(schoolBefore.routeGroup, "school_12_17");
-  assert.equal(schoolBefore.suggestedLine, "unclassified");
-  assert.deepEqual([...schoolBefore.matchingLines].sort(), ["12", "17"]);
-
-  const schoolAfter = classifyCapture({ lat: 46.199524, lon: 6.17492 }, "2026-06-11T12:30:00.000Z");
-  assert.equal(schoolAfter.suggestedLeg, "from_school");
-});
-
-test("weekend captures keep the normal route and time defaults", async () => {
-  const { classifyCapture, legValuesForCapturedAt } = await loadSharedModule();
-
-  const saturday = classifyCapture({ lat: 46.22204, lon: 6.097272 }, "2026-06-13T07:30:00.000Z");
-  assert.equal(saturday.routeGroup, "home_14_18");
-  assert.equal(saturday.suggestedLeg, "from_home");
-  assert.deepEqual(legValuesForCapturedAt("2026-06-13T07:30:00.000Z"), ["unclassified", "from_home", "to_school"]);
-});
-
-test("line classification is exact only when one configured line matches", async () => {
-  const { classifyCapture } = await loadSharedModule();
-
-  const jonction = classifyCapture({ lat: 46.200687, lon: 6.129466 }, "2026-06-11T07:30:00.000Z");
-  assert.equal(jonction.status, "matched");
-  assert.equal(jonction.suggestedLeg, "from_home");
-  assert.equal(jonction.suggestedLine, "14");
-  assert.equal(jonction.routeGroup, "home_14_18");
-});
-
-test("classification stays manual when corridors overlap or location is far away", async () => {
-  const { classifyCapture } = await loadSharedModule();
-
-  const overlap = classifyCapture({ lat: 46.204251, lon: 6.143305 }, "2026-06-11T07:30:00.000Z");
-  assert.equal(overlap.status, "ambiguous");
-  assert.equal(overlap.suggestedLeg, "unclassified");
-
-  const far = classifyCapture({ lat: 46.5, lon: 6.5 }, "2026-06-11T07:30:00.000Z");
-  assert.equal(far.status, "outside_geneva");
-  assert.equal(far.suggestedLeg, "unclassified");
-});
-
-test("route geometry and stop points within 250m match", async () => {
-  const { classifyCapture, MATCH_RADIUS_METERS } = await loadSharedModule();
-
+test("runtime transit data classifies one line and keeps overlaps manual", async () => {
+  const { classifyCapture, MATCH_RADIUS_METERS, STOP_MATCH_RADIUS_METERS, setTransitData } = await loadSharedModule();
+  const stop = { name: "Genève, Test", lat: 46.2, lon: 6.14 };
+  const line5 = { id: "line_5", label: "Line 5", line: "5", routeGroup: "line_5", points: [stop, { ...stop, lon: 6.15 }], paths: [] };
+  setTransitData([line5], [stop]);
   assert.equal(MATCH_RADIUS_METERS, 250);
+  assert.equal(STOP_MATCH_RADIUS_METERS, 10);
+  const exact = classifyCapture({ lat: 46.2, lon: 6.14 }, "2026-06-11T07:30:00.000Z");
+  assert.equal(exact.status, "matched");
+  assert.equal(exact.suggestedLine, "5");
+  assert.equal(exact.nearestStopName, "Genève, Test");
+  assert.equal(classifyCapture({ lat: 46.2, lon: 6.1401 }, "2026-06-11T07:30:00.000Z").nearestStopName, "Genève, Test");
+  const outsideStopRadius = classifyCapture({ lat: 46.2, lon: 6.1402 }, "2026-06-11T07:30:00.000Z");
+  assert.equal(outsideStopRadius.status, "matched");
+  assert.equal(outsideStopRadius.nearestStopName, "");
+  assert.equal(classifyCapture({ lat: 46.2, lon: 6.14 }, "2026-06-11T07:30:00.000Z", false).nearestStopName, "");
 
-  const onRoute = classifyCapture({ lat: 46.19995, lon: 6.1723 }, "2026-06-12T05:45:00.000Z");
-  assert.equal(onRoute.status, "ambiguous");
-  assert.equal(onRoute.routeGroup, "school_12_17");
-  assert.equal(onRoute.nearestStopName, "Chêne-Bougeries, Grange-Canal");
-  assert.equal(onRoute.suggestedLeg, "to_school");
-  assert.equal(onRoute.suggestedLine, "unclassified");
-  assert.deepEqual([...onRoute.matchingLines].sort(), ["12", "17"]);
-
-  const nearStopOnly = classifyCapture({ lat: 46.1981, lon: 6.1721 }, "2026-06-12T05:45:00.000Z");
-  assert.equal(nearStopOnly.status, "ambiguous");
-  assert.equal(nearStopOnly.routeGroup, "school_12_17");
-  assert.equal(nearStopOnly.nearestStopName, "Chêne-Bougeries, Grange-Canal");
-  assert.equal(nearStopOnly.suggestedLeg, "to_school");
+  setTransitData([line5, { ...line5, id: "line_A", line: "A", routeGroup: "line_A" }], [stop]);
+  const overlap = classifyCapture({ lat: 46.2, lon: 6.14 }, "2026-06-11T07:30:00.000Z");
+  assert.equal(overlap.status, "ambiguous");
+  assert.deepEqual(overlap.matchingLines, ["5", "A"]);
+  assert.equal(classifyCapture({ lat: 46.5, lon: 6.5 }, "2026-06-11T07:30:00.000Z").status, "outside_geneva");
 });
 
-test("blandonnet-adjacent points inside 250m are allowed", async () => {
-  const { classifyCapture } = await loadSharedModule();
-
-  const detected = classifyCapture({ lat: 46.2183, lon: 6.1172 }, "2026-06-12T05:45:00.000Z");
-  assert.equal(detected.status, "ambiguous");
-  assert.equal(detected.routeGroup, "home_14_18");
-  assert.equal(detected.suggestedLeg, "from_home");
-  assert.ok(Number(detected.distanceMeters) <= 250);
-  assert.deepEqual([...detected.matchingLines].sort(), ["14", "18"]);
+test("generated transit metadata contains the full mixed-mode catalog", async () => {
+  const metadata = JSON.parse(await readFile(new URL("../storage-data/transit-metadata.json", import.meta.url), "utf8"));
+  const types = new Set(metadata.lines.map((line) => line.t));
+  assert.equal(metadata.lines.length, 78);
+  assert.equal(metadata.lines.reduce((count, line) => count + line.d.length, 0), 156);
+  assert.ok(types.has("BUS"));
+  assert.ok(types.has("TRAM"));
+  assert.ok(types.has("TROLLEY"));
+  assert.ok(metadata.lines.some((line) => line.l === "A"));
+  assert.ok(metadata.lines.every((line) => /^#[0-9A-F]{6}$/i.test(line.c) && line.d.length));
 });
 
 test("server not_found means a pending delete is already settled", async () => {
@@ -170,34 +126,18 @@ test("recent Trip Entries returns only the two newest captures", async () => {
   assert.deepEqual(recentTripEntries(entries, 2).map((entry) => entry.clientEntryId), ["newest", "middle"]);
 });
 
-test("review Leg filters group home and school Trip Entries", async () => {
+test("review filters combine live query line type and date", async () => {
   const { filterReviewEntries } = await loadReviewModule();
   const entries = [
-    { clientEntryId: "from-home", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "Bernex, Vailly" },
-    { clientEntryId: "to-home", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "Meyrin, CERN" },
-    { clientEntryId: "to-school", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "Thônex, Moillesulaz" },
-    { clientEntryId: "from-school", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "Lancy-Pont-Rouge, Gare" },
-    { clientEntryId: "no-leg", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "unclassified" }
-  ];
-
-  assert.deepEqual(filterReviewEntries(entries, { leg: "home" }).map((entry) => entry.clientEntryId), ["from-home", "to-home"]);
-  assert.deepEqual(filterReviewEntries(entries, { leg: "school" }).map((entry) => entry.clientEntryId), ["to-school", "from-school"]);
-  assert.deepEqual(filterReviewEntries(entries, { leg: "no_leg" }).map((entry) => entry.clientEntryId), ["no-leg"]);
-});
-
-test("review filters combine line type and vehicle number", async () => {
-  const { filterReviewEntries } = await loadReviewModule();
-  const entries = [
-    { clientEntryId: "match-new", capturedAt: "2026-06-17T08:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "been_on", vehicleNumber: "867" },
-    { clientEntryId: "wrong-type", capturedAt: "2026-06-17T07:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "seen", vehicleNumber: "867" },
-    { clientEntryId: "wrong-line", capturedAt: "2026-06-17T06:00:00.000Z", savedLeg: "Grand-Lancy, Palettes", savedLine: "18", observationType: "been_on", vehicleNumber: "867" },
-    { clientEntryId: "wrong-vehicle", capturedAt: "2026-06-17T05:00:00.000Z", savedLeg: "Bernex, Vailly", savedLine: "14", observationType: "been_on", vehicleNumber: "432" },
-    { clientEntryId: "match-old", capturedAt: "2026-06-17T04:00:00.000Z", savedLeg: "Meyrin, Gravière", savedLine: "14", observationType: "been_on", vehicleNumber: "8670" }
+    { clientEntryId: "match", savedAt: "2026-06-17T08:00:00.000Z", savedLeg: "Airport", savedLine: "5", observationType: "seen", vehicleNumber: "867", nearestStopName: "Cornavin" },
+    { clientEntryId: "wrong-type", savedAt: "2026-06-17T07:00:00.000Z", savedLeg: "Airport", savedLine: "5", observationType: "been_on", vehicleNumber: "867", nearestStopName: "Cornavin" },
+    { clientEntryId: "wrong-line", savedAt: "2026-06-17T06:00:00.000Z", savedLeg: "Airport", savedLine: "10", observationType: "seen", vehicleNumber: "867", nearestStopName: "Cornavin" },
+    { clientEntryId: "wrong-date", savedAt: "2026-06-16T06:00:00.000Z", savedLeg: "Airport", savedLine: "5", observationType: "seen", vehicleNumber: "867", nearestStopName: "Cornavin" }
   ];
 
   assert.deepEqual(
-    filterReviewEntries(entries, { leg: "home", line: "14", type: "been_on", vehicleNumber: "867" }).map((entry) => entry.clientEntryId),
-    ["match-new", "match-old"]
+    filterReviewEntries(entries, { query: "cornavin", line: "5", type: "seen", dateFrom: "2026-06-17", dateTo: "2026-06-17" }).map((entry) => entry.clientEntryId),
+    ["match"]
   );
 });
 

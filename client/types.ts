@@ -69,16 +69,6 @@ export type LocationState =
 
 export type MapPoint = { lat: number; lon: number };
 
-export type MapMetrics = {
-  width: number;
-  height: number;
-  left: number;
-  top: number;
-  zoom: number;
-  tileZoom: number;
-  tileScale: number;
-};
-
 export type MapLibreMap = {
   addLayer: (layer: Record<string, unknown>, beforeId?: string) => void;
   addSource: (id: string, source: Record<string, unknown>) => void;
@@ -125,6 +115,19 @@ export type LineInfo = {
   foreground: string;
   type: string;
   link: string;
+  directions?: string[];
+};
+
+export type UserSettings = { defaultLines: string[] };
+
+export type TransitDataConfig = {
+  version: string;
+  metadataKey: string;
+  metadataUrl: string;
+  metadataSize: number;
+  geometryKey: string;
+  geometryUrl: string;
+  geometrySize: number;
 };
 
 export type AccessCache = {

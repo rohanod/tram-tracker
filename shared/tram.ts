@@ -1,16 +1,21 @@
-import { CORRIDORS, GENEVA_BOUNDS } from "./corridors";
+import { CORRIDORS, GENEVA_BOUNDS, TRANSIT_STOPS } from "./corridors";
 
 export const MATCH_RADIUS_METERS = 250;
+export const STOP_MATCH_RADIUS_METERS = 10;
 export const LEG_VALUES = ["unclassified", "from_home", "to_school", "from_school", "to_home"];
 export const MAIN_LINE_VALUES = ["12", "14", "17", "18"];
 export const LINE_VALUES = ["unclassified", ...MAIN_LINE_VALUES];
 export const OBSERVATION_VALUES = ["been_on", "seen"];
-export const DIRECTION_OPTIONS_BY_LINE = {
+export let DIRECTION_OPTIONS_BY_LINE = {
   "12": ["Lancy-Bachet, Gare", "Thônex, Moillesulaz"],
   "14": ["Bernex, Vailly", "Meyrin, Gravière"],
   "17": ["Lancy-Pont-Rouge, Gare", "Annemasse, Parc Montessuit"],
   "18": ["Grand-Lancy, Palettes", "Meyrin, CERN"]
 };
+
+export function setDirectionOptions(options) {
+  DIRECTION_OPTIONS_BY_LINE = { ...DIRECTION_OPTIONS_BY_LINE, ...(options ?? {}) };
+}
 
 export const LEG_LABELS = {
   unclassified: "No leg",
@@ -185,7 +190,7 @@ export function normalizeLocation(location) {
   };
 }
 
-export function classifyCapture(location, capturedAt) {
+export function classifyCapture(location, _capturedAt, includeNearestStop = true) {
   if (!location) {
     return baseClassification("no_location");
   }
@@ -199,55 +204,45 @@ export function classifyCapture(location, capturedAt) {
     return baseClassification("outside_geneva");
   }
 
+  const nearestTransitStop = includeNearestStop ? nearestStopFromList(normalizedLocation, TRANSIT_STOPS) : null;
+  const nearestStopName = nearestTransitStop && nearestTransitStop.distance <= STOP_MATCH_RADIUS_METERS ? nearestTransitStop.name : "";
   const corridorDistances = CORRIDORS.map((corridor) => {
-    const stop = nearestStop(normalizedLocation, corridor);
     const routeDistanceMeters = distanceToCorridorMeters(normalizedLocation, corridor);
-    const distanceMeters = Math.min(routeDistanceMeters, stop.distance);
     return {
       corridor,
       routeDistanceMeters,
-      stopDistanceMeters: stop.distance,
-      distanceMeters,
-      nearestStopName: stop.name
+      distanceMeters: routeDistanceMeters
     };
   }).sort((a, b) => a.distanceMeters - b.distanceMeters);
 
   const matches = corridorDistances.filter((match) => match.distanceMeters <= MATCH_RADIUS_METERS);
   const nearest = corridorDistances[0];
 
+  if (!nearest) {
+    return {
+      ...baseClassification("outside_route"),
+      nearestStopName
+    };
+  }
+
   if (matches.length === 0) {
     return {
       ...baseClassification("outside_route"),
       routeGroup: "none",
       distanceMeters: roundedMeters(nearest.distanceMeters),
-      nearestStopName: nearest.nearestStopName
+      nearestStopName
     };
   }
 
-  const priorityRouteGroups = uniqueValues(matches.map((match) => match.corridor.routeGroup).filter(isPriorityRouteGroup));
-  const effectiveMatches = priorityRouteGroups.length === 1 ? matches.filter((match) => match.corridor.routeGroup === priorityRouteGroups[0]) : matches;
-  const routeGroups = uniqueValues(effectiveMatches.map((match) => match.corridor.routeGroup ?? match.corridor.id));
-  const matchingLines = uniqueValues(effectiveMatches.map((match) => match.corridor.line).filter(Boolean));
-
-  if (routeGroups.length > 1) {
-    return {
-      ...baseClassification("ambiguous"),
-      routeGroup: "multiple",
-      distanceMeters: roundedMeters(nearest.distanceMeters),
-      nearestStopName: nearest.nearestStopName,
-      matchingLines
-    };
-  }
-
-  const routeGroup = routeGroups[0];
+  const matchingLines = uniqueValues(matches.map((match) => match.corridor.line).filter(Boolean));
   const suggestedLine = matchingLines.length === 1 ? matchingLines[0] : "unclassified";
   return {
     status: matchingLines.length === 1 ? "matched" : "ambiguous",
-    suggestedLeg: legForRouteAndTime(routeGroup, capturedAt),
+    suggestedLeg: "unclassified",
     suggestedLine,
-    routeGroup,
+    routeGroup: matchingLines.length === 1 ? "line_" + suggestedLine : "multiple",
     distanceMeters: roundedMeters(matches[0].distanceMeters),
-    nearestStopName: matches[0].nearestStopName,
+    nearestStopName,
     matchingLines
   };
 }
@@ -273,24 +268,6 @@ function baseClassification(status) {
   };
 }
 
-function legForRouteAndTime(routeGroup, capturedAt) {
-  const beforeNoon = isBeforeGenevaNoon(capturedAt);
-
-  if (routeGroup === "home_14_18") {
-    return beforeNoon ? "from_home" : "to_home";
-  }
-
-  if (routeGroup === "school_12_17") {
-    return beforeNoon ? "to_school" : "from_school";
-  }
-
-  return "unclassified";
-}
-
-function isPriorityRouteGroup(routeGroup) {
-  return routeGroup === "home_14_18" || routeGroup === "school_12_17";
-}
-
 function uniqueValues(values) {
   return Array.from(new Set(values));
 }
@@ -310,7 +287,7 @@ function formatCapturedAtForMessage(capturedAt) {
     dateStyle: "medium",
     timeStyle: "short",
     hourCycle: "h23"
-  }).format(date);
+  }).format(date).replace(", ", " at ");
 }
 
 function stopHeadsign(name) {
@@ -319,24 +296,6 @@ function stopHeadsign(name) {
     .map((part) => part.trim())
     .filter(Boolean)
     .pop() ?? "";
-}
-
-function isBeforeGenevaNoon(capturedAt) {
-  const date = new Date(capturedAt);
-  if (Number.isNaN(date.getTime())) {
-    return false;
-  }
-
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Zurich",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "12");
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
-
-  return hour < 12 || (hour === 11 && minute <= 59);
 }
 
 function distanceToCorridorMeters(point, corridor) {
@@ -387,10 +346,10 @@ function distanceToSegmentMeters(point, start, end) {
   return Math.hypot(pointX - (startX + t * dx), pointY - (startY + t * dy));
 }
 
-function nearestStop(point, corridor) {
+function nearestStopFromList(point, stops) {
   let best = null;
 
-  for (const stop of corridor.points) {
+  for (const stop of stops) {
     const distance = haversineMeters(point, stop);
     if (!best || distance < best.distance) {
       best = { name: stop.name, distance };

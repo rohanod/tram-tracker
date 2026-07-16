@@ -2,6 +2,10 @@
 .env.lakebed.server
 .DS_Store
 .agents/
+.codex/
+.playwright-cli/
+openai-icons/
+*_unsigned.shortcut
 stops.json
 sitg-tpg-lignes.geojson
 skills-lock.json

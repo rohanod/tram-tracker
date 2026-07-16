@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const devRoot = join(root, ".lakebed", "dev-capsule");
-const sourceEntries = ["client", "server", "shared", "lakebed.json", ".env.lakebed.server"];
+const sourceEntries = ["client", "server", "shared", "storage-data", "lakebed.json", ".env.lakebed.server"];
 const ignoredNames = new Set([".DS_Store", ".git", ".lakebed", "node_modules"]);
 
 let lastFingerprint = "";

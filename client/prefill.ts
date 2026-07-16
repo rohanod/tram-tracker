@@ -12,8 +12,8 @@ export function shortcutPrefillFromSearch(search: string) {
   const vehicleNumber = String(vehicleRaw ?? "").replace(/\D/g, "").slice(0, 4);
   const line = lineRaw ? normalizeLine(lineRaw) : "";
   const leg = legRaw ? normalizePrefillLeg(legRaw, line) : "";
-  const lat = Number(latRaw);
-  const lon = Number(lonRaw);
+  const lat = latRaw ? Number(latRaw) : Number.NaN;
+  const lon = lonRaw ? Number(lonRaw) : Number.NaN;
   const accuracy = Number(accuracyRaw);
   const location = Number.isFinite(lat) && Number.isFinite(lon)
     ? { lat, lon, accuracy: Number.isFinite(accuracy) ? Math.max(0, accuracy) : 0 }

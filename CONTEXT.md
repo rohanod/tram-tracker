@@ -1,24 +1,32 @@
 # Vehicle Tracker
 
-Language for the private tram vehicle history context.
+Language for the private transit vehicle history context.
 
 ## Language
 
 **Trip Entry**:
-A saved observation that the user was on a tram vehicle at a specific capture time, with a vehicle number, route classification, and optional capture location.
+A saved observation that the user was on or saw a transit vehicle at a specific capture time, with a vehicle number, route classification, and optional capture location.
 _Avoid_: Todo, ride, record
 
 **Vehicle Number**:
-The 3-4 digit number visible on a tram vehicle and entered by the user.
+The 3-4 digit number visible on a transit vehicle and entered by the user.
 _Avoid_: Tram id, fleet id
 
 **Route Corridor**:
-A configured stretch of tram route used to infer the default leg from capture location.
+A configured stretch of a transit route used to infer the line from capture location.
 _Avoid_: Stop list, line
 
 **Leg**:
-The user's commute direction label for a Trip Entry, such as From home or To school.
-_Avoid_: Direction, category
+The user's commute direction label for a Trip Entry, such as From home or To school. The visible UI calls this `Direction`; the data/API may call it `headsign` when it represents a transit destination.
+_Avoid_: category
+
+**Headsign**:
+The destination text displayed by a transit line, used as the source for a selectable Direction when line metadata is available.
+_Avoid_: free-form direction when a known headsign exists
+
+**Other Line**:
+A non-default official TPG line selected through the Other Line popup. It retains the `Other` control identity while displaying the selected line number.
+_Avoid_: replacing the Other control with a separate line button
 
 **Capture Location**:
 The rounded device location stored at the moment a Trip Entry is created, used for later manual review.

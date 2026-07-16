@@ -1,838 +1,297 @@
-import { SignInWithGoogle, signOut, useAuth, useMutation, useQuery } from "lakebed/client";
+import { signOut, useAuth, useMutation, useQuery } from "lakebed/client";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { DESIGN_SYSTEM_CSS } from "./design-system";
+import { classifyCapture, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, normalizeObservationType, normalizeVehicleNumber, vehicleHistoryMessage } from "../shared/tram";
+import { DEFAULT_REVIEW_FILTERS } from "../shared/review";
 import { APP_CSS } from "./app-styles";
-import { loadCachedCorridors } from "./corridor-cache";
-import type { LineInfo, LocalEntry, LocationState, MutationResult, ServerEntry, Viewer } from "./types";
-import { DEFAULT_LINE_CATALOG, accountStatusText, compareTransitLines, installPwaAssets, lastSyncText, lineColor, lineLabel, loadLineCatalog, locationText, requestLocation, syncButtonLabel } from "./format";
-import { LAST_SYNC_META_KEY, PRIOR_AUTH_KEY, accessCacheDebug, clearAccessCache, createClientEntryId, debugAccess, debugSync, enqueueDeleteOperation, enqueueUpsertOperation, errorMessage, getSyncOperation, migrateLegacyDeletePendingEntries, migrateLegacyDirections, putLocalEntry, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation, shouldClearAccessCacheForViewer, syncOpKey, viewerDebug, wakeFailedSyncOperations, writeAccessCache, writeMeta } from "./local-store";
+import { DESIGN_SYSTEM_CSS } from "./design-system";
+import { EntryDetailsDialog, EntryDialog, FiltersDialog, SettingsDialog, type EntryFormValue } from "./entry-ui";
+import { DEFAULT_LINE_CATALOG, installPwaAssets, lastSyncText, requestLocation } from "./format";
+import {
+  LAST_SYNC_META_KEY, PRIOR_AUTH_KEY, clearAccessCache, createClientEntryId, debugSync, enqueueDeleteOperation,
+  enqueueUpsertOperation, errorMessage, getSyncOperation, migrateLegacyDeletePendingEntries, migrateLegacyDirections,
+  putLocalEntry, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation,
+  shouldClearAccessCacheForViewer, syncOpKey, wakeFailedSyncOperations, writeAccessCache, writeMeta
+} from "./local-store";
 import { localEntryFromServerEntry, mergeServerEntries, refreshLocalState, syncPendingEntries } from "./local-sync";
-import { AuthGate, LocationPermissionWarning, PageTabs, Toast } from "./ui";
-import { EntryEditDialog, EntryRow, OtherLineChip, SavedLocationDialog } from "./entry-ui";
 import { shortcutPrefillFromSearch } from "./prefill";
-import { DEFAULT_REVIEW_FILTERS, filterReviewEntries, paginateReviewEntries, recentTripEntries } from "../shared/review";
-import { appPageFromHash, hashForAppPage } from "../shared/route-state";
-import { classifyCapture, directionOptionsForLine, isValidVehicleNumber, MAIN_LINE_VALUES, OBSERVATION_LABELS, OBSERVATION_VALUES, legLabelForLine, normalizeDirection, normalizeLine, normalizeObservationType, normalizeVehicleNumber, normalizeLocation } from "../shared/tram";
+import { TrackerScreen, type ReviewFilters } from "./screens";
+import { loadTransitData } from "./transit-data";
+import type { LineInfo, LocalEntry, LocationState, MutationResult, ServerEntry, TransitDataConfig, UserSettings, Viewer } from "./types";
+import { AuthGate, Toast } from "./ui";
+import { UploadDataPage } from "./upload-data";
 
-
-
+const DEFAULT_LINES = ["14", "18", "12", "17"];
+const SETTINGS_KEY = "default-lines-local-v1";
+const SETTINGS_PENDING_KEY = "default-lines-pending-v1";
 
 export function App() {
   const auth = useAuth();
   const viewer = useQuery<Viewer>("viewer") as Viewer | undefined;
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
+  const serverSettings = useQuery<UserSettings>("settings") as UserSettings | undefined;
+  const transitConfig = useQuery<TransitDataConfig | null>("transitData") as TransitDataConfig | null | undefined;
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
+  const saveSettings = useMutation<[settings: UserSettings], MutationResult & UserSettings>("saveSettings");
   const migrateDirections = useMutation<[], MutationResult>("migrateDirections");
 
-  const [vehicleNumber, setVehicleNumber] = useState("");
-  const [observationType, setObservationType] = useState("been_on");
-  const [selectedLeg, setSelectedLeg] = useState("unclassified");
-  const [selectedLine, setSelectedLine] = useState("unclassified");
-  const [legTouched, setLegTouched] = useState(false);
-  const [lineTouched, setLineTouched] = useState(false);
-  const [showOtherLine, setShowOtherLine] = useState(false);
-  const [allLineOptions, setAllLineOptions] = useState<string[]>([...MAIN_LINE_VALUES]);
-  const [lineCatalog, setLineCatalog] = useState<Record<string, LineInfo>>(DEFAULT_LINE_CATALOG);
-  const [location, setLocation] = useState<LocationState>({ status: "idle" });
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
+  const [localHydrated, setLocalHydrated] = useState(false);
+  const [lineCatalog, setLineCatalog] = useState<Record<string, LineInfo>>(DEFAULT_LINE_CATALOG);
+  const [defaultLines, setDefaultLines] = useState(DEFAULT_LINES);
+  const [location, setLocation] = useState<LocationState>({ status: "idle" });
+  const [isOnline, setIsOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [priorAuthorized, setPriorAuthorized] = useState(false);
   const [cachedAccessAllowed, setCachedAccessAllowed] = useState(() => Boolean(readAccessCacheMirror()?.allowed));
   const [accessCacheHydrated, setAccessCacheHydrated] = useState(false);
-  const [isOnline, setIsOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [syncKick, setSyncKick] = useState(0);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState("");
-  const [appPage, setAppPage] = useState(() => (typeof window === "undefined" ? "saver" : appPageFromHash(window.location.hash)));
-  const [reviewFilters, setReviewFilters] = useState(DEFAULT_REVIEW_FILTERS);
-  const [reviewPage, setReviewPage] = useState(1);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [lastSyncAt, setLastSyncAt] = useState("");
+  const [filters, setFilters] = useState<ReviewFilters>({ ...DEFAULT_REVIEW_FILTERS });
+  const [dialog, setDialog] = useState<"create" | "edit" | "details" | "settings" | "filters" | "">("");
+  const [activeEntry, setActiveEntry] = useState<LocalEntry | null>(null);
+  const [createSeed, setCreateSeed] = useState<Partial<EntryFormValue>>({});
+  const [busy, setBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState("");
-  const [nowIso, setNowIso] = useState(new Date().toISOString());
-  const [mapEntry, setMapEntry] = useState<LocalEntry | null>(null);
-  const [editEntry, setEditEntry] = useState<LocalEntry | null>(null);
-  const previousAccessDebug = useRef("");
-  const prefillApplied = useRef(false);
   const syncInFlight = useRef(false);
-  const migrationStarted = useRef(false);
+  const migrated = useRef(false);
+  const prefillApplied = useRef(false);
 
-  const canUseSaver = Boolean(viewer?.isAllowed || cachedAccessAllowed || (!isOnline && priorAuthorized));
-  const activeSurface = canUseSaver ? "saver" : "auth_gate";
-  const cleanNumber = normalizeVehicleNumber(vehicleNumber);
-  const currentPoint = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
-  const currentClassification = useMemo(() => classifyCapture(currentPoint, nowIso), [currentPoint?.lat, currentPoint?.lon, nowIso]);
-  const selectedLineIsMain = MAIN_LINE_VALUES.includes(selectedLine);
-  const currentLegValues = useMemo(() => directionOptionsForLine(selectedLine), [selectedLine]);
-  const otherLineOptions = useMemo(() => allLineOptions.filter((line) => !MAIN_LINE_VALUES.includes(line)), [allLineOptions]);
-  const selectedLineInfo = lineCatalog[normalizeLine(selectedLine)];
-  const visibleEntries = useMemo(() => {
-    const pendingDeleteIds = new Set(localEntries.filter((entry) => entry.syncStatus === "delete_pending").map((entry) => entry.clientEntryId));
-    const merged = new Map<string, LocalEntry>();
-
-    for (const serverEntry of serverEntries) {
-      if (!pendingDeleteIds.has(serverEntry.clientEntryId)) {
-        merged.set(serverEntry.clientEntryId, localEntryFromServerEntry(serverEntry));
-      }
-    }
-
-    for (const localEntry of localEntries) {
-      if (localEntry.syncStatus !== "delete_pending") {
-        merged.set(localEntry.clientEntryId, localEntry);
-      }
-    }
-
-    return Array.from(merged.values()).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
-  }, [localEntries, serverEntries]);
-  const recentEntries = useMemo(() => recentTripEntries(visibleEntries, 2), [visibleEntries]);
-  const reviewEntries = useMemo(() => filterReviewEntries(visibleEntries, reviewFilters), [visibleEntries, reviewFilters]);
-  const pagedReviewEntries = useMemo(() => paginateReviewEntries(reviewEntries, reviewPage, 10), [reviewEntries, reviewPage]);
-
-  useEffect(() => {
-    setReviewPage(1);
-  }, [reviewFilters.leg, reviewFilters.line, reviewFilters.type, reviewFilters.vehicleNumber]);
-
-  useEffect(() => {
-    if (reviewPage !== pagedReviewEntries.currentPage) {
-      setReviewPage(pagedReviewEntries.currentPage);
-    }
-  }, [pagedReviewEntries.currentPage, reviewPage]);
+  const isLocalGuest = Boolean(viewer?.isGuest && isLocalHostname(window.location.hostname));
+  const canUseTracker = Boolean(isLocalGuest || viewer?.isAllowed || (!isOnline && priorAuthorized && cachedAccessAllowed));
+  const visibleEntries = useMemo(() => mergeVisibleEntries(serverEntries, localEntries), [serverEntries, localEntries]);
 
   useEffect(() => {
     installPwaAssets();
-    void loadCachedCorridors();
-    debugAccess("startup", {
-      isOnline,
-      mirror: accessCacheDebug(readAccessCacheMirror()),
-      path: typeof window === "undefined" ? "" : window.location.pathname
-    });
-    void migrateLegacyDeletePendingEntries()
-      .then(() => migrateLegacyDirections())
-      .then(() => wakeFailedSyncOperations())
-      .then(() => refreshLocalState(setLocalEntries, setPendingOperationCount))
-      .catch((err) => debugSync("startup-local-state-error", { error: errorMessage(err) }));
-    void readMeta(PRIOR_AUTH_KEY).then((value) => {
-      const nextPriorAuthorized = value === "true";
-      debugAccess("prior-authorized-read", { priorAuthorized: nextPriorAuthorized, rawValue: value ? "present" : "empty" });
-      setPriorAuthorized(nextPriorAuthorized);
-    }).catch((err) => debugAccess("prior-authorized-read-error", { error: errorMessage(err) }));
-    void readMeta(LAST_SYNC_META_KEY).then(setLastSuccessfulSyncAt).catch((err) => debugSync("last-sync-read-error", { error: errorMessage(err) }));
-    void readAccessCache().then((cache) => {
-      debugAccess("access-cache-read-result", accessCacheDebug(cache));
-      setCachedAccessAllowed(Boolean(cache?.allowed));
-      setAccessCacheHydrated(true);
-    }).catch((err) => {
-      debugAccess("access-cache-read-error", { error: errorMessage(err) });
-      setAccessCacheHydrated(true);
-    });
-
-    const online = () => {
-      debugAccess("network-online");
-      setIsOnline(true);
-    };
-    const offline = () => {
-      debugAccess("network-offline");
-      setIsOnline(false);
-    };
+    void Promise.allSettled([migrateLegacyDeletePendingEntries(), migrateLegacyDirections(), wakeFailedSyncOperations()])
+      .then(() => refreshLocalState(setLocalEntries, setPendingCount))
+      .then(() => setLocalHydrated(true))
+      .catch((error) => { setLoadError(errorMessage(error)); setLocalHydrated(true); });
+    void readMeta(PRIOR_AUTH_KEY).then((value) => setPriorAuthorized(value === "true"));
+    void readMeta(LAST_SYNC_META_KEY).then(setLastSyncAt);
+    void readAccessCache().then((cache) => { setCachedAccessAllowed(Boolean(cache?.allowed)); setAccessCacheHydrated(true); }).catch(() => setAccessCacheHydrated(true));
+    void readMeta(SETTINGS_KEY).then((value) => { if (value) setDefaultLines(parseLines(value)); });
+    const online = () => setIsOnline(true);
+    const offline = () => setIsOnline(false);
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
-    const onHashChange = () => setAppPage(appPageFromHash(window.location.hash));
-    window.addEventListener("hashchange", onHashChange);
-    return () => {
-      window.removeEventListener("online", online);
-      window.removeEventListener("offline", offline);
-      window.removeEventListener("hashchange", onHashChange);
-    };
+    return () => { window.removeEventListener("online", online); window.removeEventListener("offline", offline); };
   }, []);
 
   useEffect(() => {
-    const id = window.setInterval(() => setNowIso(new Date().toISOString()), 30000);
-    return () => window.clearInterval(id);
-  }, []);
+    void loadTransitData(transitConfig).then((catalog) => {
+      if (catalog) setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog });
+      else if (transitConfig?.metadataUrl && transitConfig?.geometryUrl) setLoadError("Transit data could not be loaded. Cached entries remain available.");
+    });
+  }, [transitConfig?.version, transitConfig?.metadataUrl, transitConfig?.geometryUrl, isOnline]);
 
   useEffect(() => {
-    if (!toast) {
-      return;
-    }
-
-    const id = window.setTimeout(() => setToast(""), 5200);
-    return () => window.clearTimeout(id);
-  }, [toast]);
-
-  useEffect(() => {
-    void loadLineCatalog()
-      .then((catalog) => {
-        setLineCatalog(catalog);
-        setAllLineOptions(Object.keys(catalog).sort(compareTransitLines));
-      })
-      .catch((err) => debugSync("line-options-load-failed", { error: errorMessage(err) }));
-  }, []);
-
-  useEffect(() => {
-    if (prefillApplied.current || typeof window === "undefined") {
-      return;
-    }
-
-    prefillApplied.current = true;
-    const prefill = shortcutPrefillFromSearch(window.location.search);
-    if (!prefill.hasAny) {
-      return;
-    }
-
-    if (prefill.vehicleNumber) {
-      setVehicleNumber(prefill.vehicleNumber);
-    }
-    if (prefill.observationType) {
-      setObservationType(prefill.observationType);
-    }
-    if (prefill.leg) {
-      setLegTouched(true);
-      setSelectedLeg(prefill.leg);
-    }
-    if (prefill.line) {
-      setLineTouched(true);
-      setSelectedLine(prefill.line);
-      setShowOtherLine(!MAIN_LINE_VALUES.includes(prefill.line) && prefill.line !== "unclassified");
-    }
-    if (prefill.location) {
-      setLocation({ status: "captured", lat: prefill.location.lat, lon: prefill.location.lon, accuracy: prefill.location.accuracy });
-    }
-
-    setMessage("Details loaded from the URL. Review and save.");
-  }, []);
+    if (!Array.isArray(serverSettings?.defaultLines)) return;
+    void readMeta(SETTINGS_PENDING_KEY).then((pending) => {
+      if (pending !== "true") {
+        setDefaultLines(serverSettings.defaultLines);
+        void writeMeta(SETTINGS_KEY, JSON.stringify(serverSettings.defaultLines));
+      }
+    });
+  }, [serverSettings?.defaultLines?.join("|")]);
 
   useEffect(() => {
     if (viewer?.isAllowed) {
-      debugAccess("viewer-allowed-cache-write", { viewer: viewerDebug(viewer) });
       setPriorAuthorized(true);
       setCachedAccessAllowed(true);
       void writeMeta(PRIOR_AUTH_KEY, "true");
       void writeAccessCache(viewer);
     } else if (shouldClearAccessCacheForViewer(viewer, cachedAccessAllowed) && accessCacheHydrated && !auth.isLoading) {
-      debugAccess("viewer-not-allowed-cache-clear", { viewer: viewerDebug(viewer) });
       setCachedAccessAllowed(false);
       void clearAccessCache();
-    } else if (viewer && !viewer.isGuest && !viewer.isAllowed) {
-      debugAccess("viewer-not-allowed-cache-clear-skipped", {
-        accessCacheHydrated,
-        authLoading: auth.isLoading,
-        cachedAccessAllowed,
-        viewer: viewerDebug(viewer)
-      });
-    } else if (viewer) {
-      debugAccess("viewer-not-eligible", { viewer: viewerDebug(viewer) });
     }
-  }, [viewer?.isAllowed, viewer?.isGuest, viewer?.email, viewer?.userId, cachedAccessAllowed, accessCacheHydrated, auth.isLoading]);
+  }, [viewer?.isAllowed, viewer?.isGuest, viewer?.email, cachedAccessAllowed, accessCacheHydrated, auth.isLoading]);
 
   useEffect(() => {
-    if (!viewer?.isAllowed || migrationStarted.current) {
-      return;
-    }
+    if (!viewer?.isAllowed) return;
+    void mergeServerEntries(serverEntries).then(() => refreshLocalState(setLocalEntries, setPendingCount));
+  }, [viewer?.isAllowed, serverEntries.map((entry) => `${entry.id}:${entry.updatedAt}:${entry.savedLine}:${entry.savedLeg}`).join("|")]);
 
-    migrationStarted.current = true;
-    void migrateDirections()
-      .then(() => refreshLocalState(setLocalEntries, setPendingOperationCount))
-      .catch((err) => debugSync("direction-migration-error", { error: errorMessage(err) }));
+  useEffect(() => {
+    if (!viewer?.isAllowed || migrated.current) return;
+    migrated.current = true;
+    void migrateDirections();
   }, [viewer?.isAllowed]);
 
   useEffect(() => {
-    const snapshot = {
-      activeSurface,
-      canUseSaver,
-      cachedAccessAllowed,
-      accessCacheHydrated,
-      priorAuthorized,
-      isOnline,
-      auth: {
-        isLoading: auth.isLoading,
-        isGuest: auth.isGuest
-      },
-      viewer: viewerDebug(viewer)
-    };
-    const fingerprint = JSON.stringify(snapshot);
-    if (previousAccessDebug.current === fingerprint) {
-      return;
-    }
-
-    previousAccessDebug.current = fingerprint;
-    debugAccess("access-state", snapshot);
-  }, [
-    activeSurface,
-    canUseSaver,
-    cachedAccessAllowed,
-    accessCacheHydrated,
-    priorAuthorized,
-    isOnline,
-    auth.isLoading,
-    auth.isGuest,
-    viewer?.isAllowed,
-    viewer?.hasAllowedEmail,
-    viewer?.isGuest,
-    viewer?.provider,
-    viewer?.userId,
-    viewer?.email
-  ]);
+    if (!viewer?.isAllowed || !isOnline || syncInFlight.current || pendingCount === 0) return;
+    void runSync(false);
+  }, [viewer?.isAllowed, isOnline, pendingCount, syncKick]);
 
   useEffect(() => {
-    if (canUseSaver && location.status === "idle") {
-      requestLocation(setLocation);
-    }
-  }, [canUseSaver, location.status]);
-
-  useEffect(() => {
-    if (!legTouched) {
-      setSelectedLeg(normalizeDirection(currentClassification.suggestedLeg, selectedLine || currentClassification.suggestedLine));
-    }
-  }, [currentClassification.suggestedLeg, currentClassification.suggestedLine, selectedLine, legTouched]);
-
-  useEffect(() => {
-    if (!lineTouched) {
-      setSelectedLine(currentClassification.suggestedLine);
-      setShowOtherLine(!MAIN_LINE_VALUES.includes(currentClassification.suggestedLine) && currentClassification.suggestedLine !== "unclassified");
-    }
-  }, [currentClassification.suggestedLine, lineTouched]);
-
-  useEffect(() => {
-    if (!viewer?.isAllowed) {
-      return;
-    }
-
-    void mergeServerEntries(serverEntries).then(() => refreshLocalState(setLocalEntries, setPendingOperationCount));
-  }, [viewer?.isAllowed, serverEntries.map((entry) => [entry.id, entry.clientEntryId, entry.savedLeg, entry.savedLine, entry.savedAt, entry.updatedAt].join(":")).join("|")]);
-
-
-  useEffect(() => {
-    if (!viewer?.isAllowed || !isOnline || syncInFlight.current || pendingOperationCount === 0) {
-      return;
-    }
-
-    void syncPendingEntries({
-      saveEntry,
-      deleteEntry,
-      setLocalEntries,
-      setPendingOperationCount,
-      setSyncing,
-      setMessage,
-      setLastSuccessfulSyncAt,
-      syncInFlight
-    }).catch((err) => {
-      debugSync("auto-sync-error", { error: errorMessage(err) });
-      setMessage("Sync could not run. Use Sync to retry.");
+    if (!viewer?.isAllowed || !isOnline) return;
+    void readMeta(SETTINGS_PENDING_KEY).then(async (pending) => {
+      if (pending !== "true") return;
+      const result = await saveSettings({ defaultLines });
+      if (result.ok) await writeMeta(SETTINGS_PENDING_KEY, "false");
     });
-  }, [viewer?.isAllowed, isOnline, pendingOperationCount, syncKick]);
+  }, [viewer?.isAllowed, isOnline]);
 
   useEffect(() => {
-    if (!viewer?.isAllowed || !isOnline || pendingOperationCount === 0) {
-      return;
-    }
+    if (prefillApplied.current) return;
+    prefillApplied.current = true;
+    const prefill = shortcutPrefillFromSearch(window.location.search);
+    if (!prefill.hasAny) return;
+    setCreateSeed({ vehicleNumber: prefill.vehicleNumber, observationType: prefill.observationType, savedLine: prefill.line, savedLeg: prefill.leg });
+    if (prefill.location) setLocation({ status: "captured", ...prefill.location });
+    else requestLocation(setLocation);
+    setDialog("create");
+  }, []);
 
-    const id = window.setInterval(() => {
-      debugSync("sync-retry-timer", { pendingOperationCount });
-      setSyncKick((value) => value + 1);
-    }, 15000);
-    return () => window.clearInterval(id);
-  }, [viewer?.isAllowed, isOnline, pendingOperationCount]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 4800);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
-  async function onManualSync() {
-    setError("");
-    setMessage("");
-
-    if (!viewer?.isAllowed) {
-      setError("Sign in with the allowed account before syncing.");
-      return;
-    }
-
-    if (!isOnline) {
-      setError("You are offline. Sync will be available when the connection returns.");
-      return;
-    }
-
-    await syncPendingEntries({
-      saveEntry,
-      deleteEntry,
-      setLocalEntries,
-      setPendingOperationCount,
-      setSyncing,
-      setMessage,
-      setLastSuccessfulSyncAt,
-      syncInFlight,
-      force: true
-    }).catch((err) => {
-      debugSync("manual-sync-error", { error: errorMessage(err) });
-      setMessage("Sync failed. Try again.");
-    });
+  async function runSync(force: boolean) {
+    await syncPendingEntries({ saveEntry, deleteEntry, setLocalEntries, setPendingOperationCount: setPendingCount, setSyncing, setMessage: setToast, setLastSuccessfulSyncAt: setLastSyncAt, syncInFlight, force })
+      .catch((error) => { debugSync("sync-error", { error: errorMessage(error) }); setToast("Sync failed. Try again."); });
   }
 
-  function navigateTo(page: string) {
-    setAppPage(page);
-    if (typeof window !== "undefined") {
-      window.location.hash = hashForAppPage(page);
-    }
+  function openCreate() {
+    setCreateSeed({});
+    setDialogError("");
+    requestLocation(setLocation);
+    setDialog("create");
   }
 
-  function updateReviewFilter(name: string, value: string) {
-    setReviewFilters((filters) => ({ ...filters, [name]: value }));
+  async function createEntry(value: EntryFormValue) {
+    if (!canUseTracker || !isValidVehicleNumber(value.vehicleNumber) || !lineCatalog[value.savedLine]) return;
+    const currentPoint = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
+    if (!currentPoint) { setDialogError("Wait a moment before saving."); return; }
+    setBusy(true);
+    setDialogError("");
+    try {
+      const capturedAt = new Date().toISOString();
+      const currentClassification = classifyCapture(currentPoint, capturedAt, false);
+      const number = normalizeVehicleNumber(value.vehicleNumber);
+      const prior = visibleEntries.find((entry) => entry.vehicleNumber === number);
+      const entry: LocalEntry = {
+        clientEntryId: createClientEntryId(), serverId: "", vehicleNumber: number,
+        observationType: normalizeObservationType(value.observationType), capturedAt, savedAt: capturedAt,
+        lat: currentPoint.lat.toFixed(4), lon: currentPoint.lon.toFixed(4),
+        locationStatus: "captured",
+        classificationStatus: currentClassification.status, inferredLeg: currentClassification.suggestedLeg,
+        savedLeg: normalizeDirection(value.savedLeg, value.savedLine), inferredLine: currentClassification.suggestedLine,
+        savedLine: normalizeLine(value.savedLine), routeGroup: `line_${normalizeLine(value.savedLine)}`,
+        distanceMeters: currentClassification.distanceMeters, nearestStopName: value.nearestStopName,
+        syncStatus: "pending", lastError: "", updatedAt: capturedAt
+      };
+      await persistEntry(entry);
+      setDialog("");
+      setToast(prior ? vehicleHistoryMessage(prior) : isOnline ? "Entry saved. Syncing now." : "Entry saved offline.");
+    } catch (error) {
+      setDialogError(errorMessage(error));
+    } finally { setBusy(false); }
   }
 
-  async function onSubmit(event: SubmitEvent) {
-    event.preventDefault();
-    setError("");
-    setMessage("");
-    setToast("");
+  async function updateEntry(value: EntryFormValue) {
+    if (!activeEntry) return;
+    setBusy(true);
+    setDialogError("");
+    try {
+      const updated: LocalEntry = {
+        ...activeEntry,
+        vehicleNumber: normalizeVehicleNumber(value.vehicleNumber),
+        observationType: normalizeObservationType(value.observationType),
+        savedLine: normalizeLine(value.savedLine),
+        savedLeg: normalizeDirection(value.savedLeg, value.savedLine),
+        nearestStopName: value.nearestStopName,
+        routeGroup: `line_${normalizeLine(value.savedLine)}`,
+        syncStatus: "pending",
+        lastError: "",
+        updatedAt: new Date().toISOString()
+      };
+      await persistEntry(updated);
+      setActiveEntry(updated);
+      setDialog("details");
+      setToast("Entry updated.");
+    } catch (error) { setDialogError(errorMessage(error)); }
+    finally { setBusy(false); }
+  }
 
-    if (!canUseSaver) {
-      setError("Sign in with the allowed Google account before saving.");
-      return;
-    }
-
-    if (!isValidVehicleNumber(vehicleNumber)) {
-      setError("Enter a 3 or 4 digit vehicle number.");
-      return;
-    }
-
-    const capturedAt = new Date().toISOString();
-    const savedAt = capturedAt;
-    const point = location.status === "captured" ? normalizeLocation({ lat: location.lat, lon: location.lon }) : null;
-    const classification = classifyCapture(point, capturedAt);
-    const inferredLine = classification.suggestedLine;
-    const savedLine = normalizeLine(selectedLine || inferredLine);
-    const inferredLeg = normalizeDirection(classification.suggestedLeg, inferredLine);
-    const savedLeg = normalizeDirection(selectedLeg || inferredLeg, savedLine);
-    const priorBeenOnCount = visibleEntries.filter((entry) => entry.vehicleNumber === cleanNumber && normalizeObservationType(entry.observationType) === "been_on").length;
-    const entry: LocalEntry = {
-      clientEntryId: createClientEntryId(),
-      serverId: "",
-      vehicleNumber: cleanNumber,
-      observationType: normalizeObservationType(observationType),
-      capturedAt,
-      savedAt,
-      lat: point ? point.lat.toFixed(4) : "",
-      lon: point ? point.lon.toFixed(4) : "",
-      locationStatus: point ? "captured" : location.status === "checking" ? "unavailable" : location.status,
-      classificationStatus: classification.status,
-      inferredLeg,
-      savedLeg,
-      inferredLine,
-      savedLine,
-      routeGroup: classification.routeGroup,
-      distanceMeters: classification.distanceMeters,
-      nearestStopName: classification.nearestStopName,
-      syncStatus: "pending",
-      lastError: "",
-      updatedAt: capturedAt
-    };
-
+  async function persistEntry(entry: LocalEntry) {
     await putLocalEntry(entry);
     await enqueueUpsertOperation(entry);
-    await refreshLocalState(setLocalEntries, setPendingOperationCount);
-    setVehicleNumber("");
-    setLegTouched(false);
-    setLineTouched(false);
-    setSelectedLeg(normalizeDirection(classification.suggestedLeg, classification.suggestedLine));
-    setSelectedLine(classification.suggestedLine);
-    setShowSaveDialog(false);
-    setMessage(isOnline && viewer?.isAllowed ? "Saved locally. Syncing now." : "Saved on this device. It will sync when online.");
-    if (priorBeenOnCount > 0) {
-      setToast("You have been on vehicle " + cleanNumber + " before. " + priorBeenOnCount + " previous " + (priorBeenOnCount === 1 ? "save" : "saves") + ".");
-    }
+    await refreshLocalState(setLocalEntries, setPendingCount);
     setSyncKick((value) => value + 1);
   }
 
-  async function onSaveEntryEdit(entry: LocalEntry) {
-    await putLocalEntry(entry);
-    await enqueueUpsertOperation(entry);
-    await refreshLocalState(setLocalEntries, setPendingOperationCount);
-    setEditEntry(null);
-    setMessage(isOnline && viewer?.isAllowed ? "Updated locally. Syncing now." : "Updated on this device. It will sync when online.");
-    setSyncKick((value) => value + 1);
-  }
-
-  async function onDelete(entry: LocalEntry) {
+  async function removeEntry(entry: LocalEntry) {
     const pendingUpsert = await getSyncOperation(syncOpKey("upsert", entry.clientEntryId));
     await removeLocalEntry(entry.clientEntryId);
     await removeSyncOperation(syncOpKey("upsert", entry.clientEntryId));
-
-    const mightHaveServerCopy = Boolean(entry.serverId || entry.syncStatus === "synced" || entry.syncStatus === "failed" || (pendingUpsert?.attempts ?? 0) > 0);
-    if (mightHaveServerCopy) {
-      await enqueueDeleteOperation(entry);
-    }
-
-    await refreshLocalState(setLocalEntries, setPendingOperationCount);
+    if (entry.serverId || entry.syncStatus === "synced" || (pendingUpsert?.attempts ?? 0) > 0) await enqueueDeleteOperation(entry);
+    await refreshLocalState(setLocalEntries, setPendingCount);
+    setDialog("");
+    setActiveEntry(null);
     setSyncKick((value) => value + 1);
+    setToast("Entry deleted.");
   }
 
-  return (
-    <main className="app-shell">
-      <style>{DESIGN_SYSTEM_CSS + APP_CSS}</style>
-      <section className="utility">
-        <header className="topbar topbar-compact">
-          <div className="rail-title" aria-hidden="true">
-            <strong>Vehicle Tracker</strong>
-            <span>Private field log</span>
-          </div>
-          <div className="topbar-status">
-            <div className="session">
-              <span className={isOnline ? "status-dot online" : "status-dot"} aria-hidden="true" />
-              <span>{isOnline ? "Online" : "Offline"}</span>
-            </div>
-            <span className="sync-summary">{lastSyncText(lastSuccessfulSyncAt, syncing, pendingOperationCount )}</span>
-            <span className="account-summary">{accountStatusText(auth.isLoading, viewer, canUseSaver, priorAuthorized)}</span>
-          </div>
-          <div className="topbar-actions">
-            <button
-              className="topbar-action"
-              type="button"
-              disabled={!canUseSaver || !isOnline || syncing}
-              onClick={() => void onManualSync()}
-            >
-              {syncButtonLabel(syncing, pendingOperationCount )}
-            </button>
-            {!auth.isLoading && !auth.isGuest ? (
-              <button className="topbar-action" type="button" onClick={() => signOut()}>
-                Sign out
-              </button>
-            ) : canUseSaver && auth.isGuest ? (
-              <SignInWithGoogle className="topbar-action" />
-            ) : null}
-          </div>
-        </header>
-        <PageTabs appPage={appPage} disabled={!canUseSaver} onNavigate={navigateTo} />
+  async function updateDefaults(lines: string[]) {
+    setBusy(true);
+    setDefaultLines(lines);
+    await writeMeta(SETTINGS_KEY, JSON.stringify(lines));
+    await writeMeta(SETTINGS_PENDING_KEY, "true");
+    if (viewer?.isAllowed && isOnline) {
+      const result = await saveSettings({ defaultLines: lines });
+      if (!result.ok) { setToast("Defaults saved locally. Account sync failed."); setBusy(false); return; }
+      await writeMeta(SETTINGS_PENDING_KEY, "false");
+    }
+    setBusy(false);
+    setDialog("");
+    setToast("Default lines saved.");
+  }
 
-        <section className="workspace" aria-label="Vehicle Tracker workspace">
-        {!canUseSaver ? (
-          <AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} cachedAccessAllowed={cachedAccessAllowed} />
-        ) : appPage === "saves" ? (
-          <>
-            <section className="review-panel" aria-label="Saved trip entries">
-              <div className="review-header">
-                <div>
-                  <h2>Saved Trip Entries</h2>
-                  <p className="subtle">Filter recent saves without changing any data.</p>
-                </div>
-              </div>
+  const styles = <style>{DESIGN_SYSTEM_CSS + APP_CSS}</style>;
+  if (window.location.pathname === "/upload-data") return <>{styles}<UploadDataPage authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
+  if (!canUseTracker) return <>{styles}<AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} /></>;
 
-              <div className="review-filters" aria-label="Review filters">
-                <label>
-                  <span>Vehicle</span>
-                  <input
-                    inputMode="numeric"
-                    maxLength={4}
-                    placeholder="Any"
-                    value={reviewFilters.vehicleNumber}
-                    onInput={(event) => updateReviewFilter("vehicleNumber", event.currentTarget.value.replace(/\D/g, "").slice(0, 4))}
-                  />
-                </label>
-                <label>
-                  <span>Direction</span>
-                  <select value={reviewFilters.leg} onChange={(event) => updateReviewFilter("leg", event.currentTarget.value)}>
-                    <option value="all">All directions</option>
-                    <option value="no_leg">No direction</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Line</span>
-                  <select value={reviewFilters.line} onChange={(event) => updateReviewFilter("line", event.currentTarget.value)}>
-                    <option value="all">All lines</option>
-                    {allLineOptions.map((line) => (
-                      <option key={line} value={line}>
-                        {lineLabel(line)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Type</span>
-                  <select value={reviewFilters.type} onChange={(event) => updateReviewFilter("type", event.currentTarget.value)}>
-                    <option value="all">All types</option>
-                    <option value="been_on">Been on</option>
-                    <option value="seen">Seen</option>
-                  </select>
-                </label>
-              </div>
+  return <>{styles}
+    <TrackerScreen
+      entries={visibleEntries} filters={filters} lineCatalog={lineCatalog} isOnline={isOnline}
+      isLoading={!localHydrated || (!viewer && auth.isLoading)} loadError={loadError}
+      lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} pendingCount={pendingCount} syncing={syncing}
+      onChangeFilters={setFilters} onNew={openCreate}
+      onOpen={(entry) => { setActiveEntry(entry); setDialog("details"); }}
+      onOpenFilters={() => setDialog("filters")} onOpenSettings={() => setDialog("settings")}
+      onRetry={() => { setLoadError(""); setSyncKick((value) => value + 1); void loadTransitData(transitConfig).then((catalog) => catalog && setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog })); }}
+      onSignOut={() => signOut()} onSync={() => isLocalGuest ? setToast("Local guest entries stay on this device.") : void runSync(true)}
+    />
+    {dialog === "create" ? <EntryDialog mode="create" initialValue={createSeed} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("")} onSubmit={(value) => void createEntry(value)} /> : null}
+    {dialog === "edit" && activeEntry ? <EntryDialog mode="edit" entry={activeEntry} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("details")} onSubmit={(value) => void updateEntry(value)} /> : null}
+    {dialog === "details" && activeEntry ? <EntryDetailsDialog entry={activeEntry} lineCatalog={lineCatalog} onClose={() => setDialog("")} onEdit={() => { setDialogError(""); setDialog("edit"); }} onDelete={() => void removeEntry(activeEntry)} /> : null}
+    {dialog === "settings" ? <SettingsDialog defaultLines={defaultLines} lineCatalog={lineCatalog} busy={busy} onClose={() => setDialog("")} onSave={(lines) => void updateDefaults(lines)} /> : null}
+    {dialog === "filters" ? <FiltersDialog filters={filters} lineCatalog={lineCatalog} onClose={() => setDialog("")} onApply={(next) => { setFilters(next); setDialog(""); }} /> : null}
+    {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}
+  </>;
+}
 
-              <div className="review-results">
-                <span>
-                  {reviewEntries.length} {reviewEntries.length === 1 ? "save" : "saves"}
-                  {reviewEntries.length ? ` · page ${pagedReviewEntries.currentPage} of ${pagedReviewEntries.totalPages}` : ""}
-                </span>
-                <button className="secondary-button small-button" type="button" onClick={() => setReviewFilters(DEFAULT_REVIEW_FILTERS)}>
-                  Clear filters
-                </button>
-              </div>
+function mergeVisibleEntries(serverEntries: ServerEntry[], localEntries: LocalEntry[]) {
+  const pendingDeletes = new Set(localEntries.filter((entry) => entry.syncStatus === "delete_pending").map((entry) => entry.clientEntryId));
+  const merged = new Map<string, LocalEntry>();
+  for (const entry of serverEntries) if (!pendingDeletes.has(entry.clientEntryId)) merged.set(entry.clientEntryId, localEntryFromServerEntry(entry));
+  for (const entry of localEntries) if (entry.syncStatus !== "delete_pending") merged.set(entry.clientEntryId, entry);
+  return Array.from(merged.values()).sort((a, b) => String(b.savedAt || b.capturedAt).localeCompare(String(a.savedAt || a.capturedAt)));
+}
 
-              {reviewEntries.length === 0 ? (
-                <p className="empty-state">No Trip Entries match these filters.</p>
-              ) : (
-                <>
-                  <ul className="entry-list review-list">
-                    {pagedReviewEntries.entries.map((entry) => (
-                      <EntryRow entry={entry} key={entry.clientEntryId} onDelete={onDelete} onEdit={setEditEntry} onShowMap={setMapEntry} />
-                    ))}
-                  </ul>
-                  <nav className="pagination" aria-label="Saved entries pagination">
-                    <button className="secondary-button small-button" type="button" disabled={pagedReviewEntries.currentPage <= 1} onClick={() => setReviewPage((page) => Math.max(1, page - 1))}>
-                      Previous
-                    </button>
-                    <span>
-                      {pagedReviewEntries.currentPage} / {pagedReviewEntries.totalPages}
-                    </span>
-                    <button className="secondary-button small-button" type="button" disabled={pagedReviewEntries.currentPage >= pagedReviewEntries.totalPages} onClick={() => setReviewPage((page) => page + 1)}>
-                      Next
-                    </button>
-                  </nav>
-                </>
-              )}
-            </section>
-            {mapEntry ? <SavedLocationDialog entry={mapEntry} onClose={() => setMapEntry(null)} /> : null}
-            {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}
-            {editEntry ? (
-              <EntryEditDialog
-                entry={editEntry}
-                lineCatalog={lineCatalog}
-                lineOptions={allLineOptions}
-                onClose={() => setEditEntry(null)}
-                onDelete={onDelete}
-                onSave={onSaveEntryEdit}
-                onShowMap={(entry) => {
-                  setEditEntry(null);
-                  setMapEntry(entry);
-                }}
-              />
-            ) : null}
-          </>
-        ) : (
-          <>
-            <section className="home-panel" aria-label="Vehicle tracker home">
-              <div>
-                <h2>Vehicle log</h2>
-                <p className="subtle">Review what is already saved. Add a vehicle only when you need to capture a new one.</p>
-              </div>
-              <button
-                className="primary-button compact-primary"
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setMessage("");
-                  setShowSaveDialog(true);
-                }}
-              >
-                New save
-              </button>
-            </section>
+function parseLines(value: string) {
+  try {
+    const lines = JSON.parse(value);
+    return Array.isArray(lines) ? lines.map(normalizeLine).filter((line) => line !== "unclassified").slice(0, 4) : DEFAULT_LINES;
+  } catch { return DEFAULT_LINES; }
+}
 
-            {message && !showSaveDialog ? <p className="message-text">{message}</p> : null}
-            {error && !showSaveDialog ? <p className="error-text">{error}</p> : null}
-
-            {showSaveDialog ? (
-              <div className="modal-backdrop save-backdrop" role="presentation" onClick={() => setShowSaveDialog(false)}>
-                <form className="save-panel save-dialog" role="dialog" aria-modal="true" aria-labelledby="new-save-title" onSubmit={(event) => void onSubmit(event)} onClick={(event) => event.stopPropagation()}>
-                  <div className="save-dialog-header">
-                    <div>
-                      <h2 id="new-save-title">New vehicle save</h2>
-                      <p className="subtle">Capture the number, type, direction, line, and current location.</p>
-                    </div>
-                    <button className="secondary-button small-button" type="button" onClick={() => setShowSaveDialog(false)}>
-                      Close
-                    </button>
-                  </div>
-              <div className="capture-layout">
-                <section className="capture-card" aria-label="Vehicle capture">
-                  <div className="field-row">
-                    <label className="field-label" htmlFor="vehicle-number">
-                      Vehicle number
-                    </label>
-                    <input
-                      autoComplete="one-time-code"
-                      className="vehicle-input"
-                      id="vehicle-number"
-                      inputMode="numeric"
-                      maxLength={4}
-                      name="vehicle-number"
-                      pattern="[0-9]{3,4}"
-                      placeholder="867"
-                      value={vehicleNumber}
-                      onInput={(event) => setVehicleNumber(event.currentTarget.value.replace(/\D/g, "").slice(0, 4))}
-                    />
-                  </div>
-
-                  <div>
-                    <p className="field-label">Capture</p>
-                    <div className="observation-grid" role="radiogroup" aria-label="Observation type">
-                      {OBSERVATION_VALUES.map((value) => (
-                        <button
-                          className={observationType === value ? "observation-option active" : "observation-option"}
-                          key={value}
-                          type="button"
-                          role="radio"
-                          aria-checked={observationType === value}
-                          onClick={() => setObservationType(value)}
-                        >
-                          {OBSERVATION_LABELS[value as keyof typeof OBSERVATION_LABELS]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="default-card" aria-label="Location and direction default">
-                  <div className="location-row">
-                    <div>
-                      <p className="field-label">Default</p>
-                      <p className="subtle">{locationText(location, currentClassification)}</p>
-                    </div>
-                    <button className="secondary-button" type="button" onClick={() => requestLocation(setLocation)}>
-                      Refresh
-                    </button>
-                  </div>
-
-                  <LocationPermissionWarning location={location} onRetry={() => requestLocation(setLocation)} />
-
-                  <div className="leg-grid" role="radiogroup" aria-label="Direction">
-                    {currentLegValues.map((leg) => (
-                      <button
-                        className={selectedLeg === leg ? "leg-option active" : "leg-option"}
-                        key={leg}
-                        type="button"
-                        role="radio"
-                        aria-checked={selectedLeg === leg}
-                        onClick={() => {
-                          setLegTouched(true);
-                          setSelectedLeg(leg);
-                        }}
-                      >
-                        {legLabelForLine(selectedLine, leg)}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="custom-direction-field">
-                    <span>Custom direction</span>
-                    <input value={selectedLeg === "unclassified" ? "" : selectedLeg} placeholder="e.g. CERN" onInput={(event) => {
-                      setLegTouched(true);
-                      setSelectedLeg(event.currentTarget.value);
-                    }} />
-                  </label>
-                </section>
-              </div>
-
-              <section className="line-panel" aria-label="Vehicle line">
-                <div className="section-heading compact">
-                  <div>
-                    <h2>Line</h2>
-                    <p className="subtle">Pick one of the main lines or choose another TPG line.</p>
-                  </div>
-                  <span>{selectedLineInfo?.type || lineLabel(selectedLine)}</span>
-                </div>
-
-                <div className="main-line-grid" role="radiogroup" aria-label="Main lines">
-                  {MAIN_LINE_VALUES.map((line) => {
-                    const active = selectedLine === line;
-                    return (
-                      <button
-                        className={active ? "line-swatch active" : "line-swatch"}
-                        key={line}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        style={{
-                          borderColor: lineColor(line, lineCatalog),
-                          backgroundColor: "var(--surface)",
-                          color: lineColor(line, lineCatalog)
-                        }}
-                        onClick={() => {
-                          setLineTouched(true);
-                          setShowOtherLine(false);
-                          setSelectedLine(active ? "unclassified" : line);
-                        }}
-                      >
-                        {line}
-                      </button>
-                    );
-                  })}
-                  <button
-                    className={showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified") ? "other-line-button active" : "other-line-button"}
-                    type="button"
-                    aria-pressed={showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified")}
-                    onClick={() => {
-                      setLineTouched(true);
-                      if (showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified")) {
-                        setShowOtherLine(false);
-                        setSelectedLine("unclassified");
-                      } else {
-                        setShowOtherLine(true);
-                      }
-                    }}
-                  >
-                    Other
-                  </button>
-                </div>
-
-                {showOtherLine || (!selectedLineIsMain && selectedLine !== "unclassified") ? (
-                  <div className="other-line-list" role="radiogroup" aria-label="Choose another line">
-                    {otherLineOptions.map((line) => (
-                      <OtherLineChip
-                        active={selectedLine === line}
-                        info={lineCatalog[line]}
-                        key={line}
-                        line={line}
-                        onSelect={() => {
-                          setLineTouched(true);
-                          setSelectedLine(selectedLine === line ? "unclassified" : normalizeLine(line));
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-
-              {error ? <p className="error-text">{error}</p> : null}
-              {message ? <p className="message-text">{message}</p> : null}
-
-              <button className="primary-button" type="submit">
-                Save
-              </button>
-                </form>
-              </div>
-            ) : null}
-
-            <section className="history-panel" aria-label="Recent saved entries">
-              <div className="section-heading">
-                <div>
-                  <h2>Recent activity</h2>
-                  <p className="subtle">Newest Trip Entries stay visible without opening the save form.</p>
-                </div>
-              </div>
-              {visibleEntries.length === 0 ? (
-                <p className="empty-state">No vehicles saved on this device yet.</p>
-              ) : (
-                <ul className="entry-list">
-                  {visibleEntries.slice(0, 6).map((entry) => (
-                    <EntryRow entry={entry} key={entry.clientEntryId} onDelete={onDelete} onEdit={setEditEntry} onShowMap={setMapEntry} />
-                  ))}
-                </ul>
-              )}
-            </section>
-            {mapEntry ? <SavedLocationDialog entry={mapEntry} onClose={() => setMapEntry(null)} /> : null}
-            {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}
-            {editEntry ? (
-              <EntryEditDialog
-                entry={editEntry}
-                lineCatalog={lineCatalog}
-                lineOptions={allLineOptions}
-                onClose={() => setEditEntry(null)}
-                onDelete={onDelete}
-                onSave={onSaveEntryEdit}
-                onShowMap={(entry) => {
-                  setEditEntry(null);
-                  setMapEntry(entry);
-                }}
-              />
-            ) : null}
-          </>
-        )}
-        </section>
-      </section>
-    </main>
-  );
+function isLocalHostname(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname.endsWith(".localhost");
 }
