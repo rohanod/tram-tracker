@@ -76,7 +76,7 @@ button:disabled { cursor: default; opacity: .42; }
 .table-heading span { color: var(--color-text-secondary); font-size: 14px; }
 .vehicle-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .vehicle-table th { height: 40px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
-.vehicle-table thead { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }
+.vehicle-table thead { background: var(--color-surface); }
 .vehicle-table td { height: 54px; border-top: 1px solid var(--gray-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vehicle-table th:nth-child(1) { width: 12%; }
 .vehicle-table th:nth-child(2) { width: 10%; }

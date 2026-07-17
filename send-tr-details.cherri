@@ -7,8 +7,7 @@
 #define color orange
 #define glyph tram
 
-#question token "What is your API token?" "API_TOKEN"
-const shortcutToken = text(token)
+const shortcutToken = prompt("API token")
 
 action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFInputType": "Number",
@@ -17,8 +16,20 @@ action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
 }
 
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/save"
+const stopsURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/stops"
 
 const typeChoices = list("been_on", "seen")
+const location = getCurrentLocation()
+const lat = getLocationDetail(location, "Latitude")
+const lon = getLocationDetail(location, "Longitude")
+const stopsResponse = jsonRequest(stopsURL, "POST", {
+    "lat": "{lat}",
+    "lon": "{lon}"
+}, {
+    "Authorization": "Bearer {shortcutToken}",
+    "Accept": "application/json"
+})
+const stopChoices = getValue(stopsResponse, "stops")
 
 @vehicleNumber = promptWholeNumber("Vehicle number")
 @vehicleNumberRemainder = @vehicleNumber % 1
@@ -82,11 +93,15 @@ if direction == "Other" {
     }
 }
 
+const stopChoice = chooseFromList(stopChoices, "Stop saved")
+const selectedStop = getText(stopChoice)
+@nearestStopName = selectedStop
+if selectedStop == "Other" {
+    @nearestStopName = prompt("Stop saved")
+}
+
 const now = currentDate()
 const capturedAt = formatTimestamp(now, "Custom", "None", "yyyy-MM-dd'T'HH:mm:ssXXX")
-const location = getCurrentLocation()
-const lat = getLocationDetail(location, "Latitude")
-const lon = getLocationDetail(location, "Longitude")
 
 const response = jsonRequest(apiURL, "POST", {
     "vehicleNumber": "{@vehicleNumber}",
@@ -94,6 +109,7 @@ const response = jsonRequest(apiURL, "POST", {
     "type": "{observationType}",
     "direction": "{direction}",
     "customDirection": "{customDirection}",
+    "nearestStopName": "{@nearestStopName}",
     "capturedAt": "{capturedAt}",
     "lat": "{lat}",
     "lon": "{lon}"

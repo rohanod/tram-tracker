@@ -95,6 +95,36 @@ test("runtime transit data classifies one line and keeps overlaps manual", async
   assert.equal(classifyCapture({ lat: 46.5, lon: 6.5 }, "2026-06-11T07:30:00.000Z").status, "outside_geneva");
 });
 
+test("nearest transit stops support compact and raw metadata without duplicate names", async () => {
+  const { nearestTransitStops, transitStopsFromMetadata } = await loadSharedModule();
+  const compactStops = transitStopsFromMetadata({
+    v: 1,
+    stops: [
+      { n: "Genève, Near", a: 46.2, o: 6.14 },
+      { n: "Genève, Near", a: 46.20001, o: 6.14001 },
+      { n: "Genève, Far", a: 46.21, o: 6.15 }
+    ],
+    lines: []
+  });
+  const rawStops = transitStopsFromMetadata({
+    lines: [{
+      directions: [{
+        stops: [
+          { name: "Genève, Raw", lat: 46.201, lon: 6.141 },
+          { name: "Genève, Invalid", lat: "no", lon: 6.141 }
+        ]
+      }]
+    }]
+  });
+
+  assert.deepEqual(compactStops.map((stop) => stop.name), ["Genève, Near", "Genève, Near", "Genève, Far"]);
+  assert.deepEqual(rawStops.map((stop) => stop.name), ["Genève, Raw"]);
+  assert.deepEqual(
+    nearestTransitStops({ lat: 46.2, lon: 6.14 }, compactStops, 5).map((stop) => stop.name),
+    ["Genève, Near", "Genève, Far"]
+  );
+});
+
 test("generated transit metadata contains the full mixed-mode catalog", async () => {
   const metadata = JSON.parse(await readFile(new URL("../storage-data/transit-metadata.json", import.meta.url), "utf8"));
   const types = new Set(metadata.lines.map((line) => line.t));

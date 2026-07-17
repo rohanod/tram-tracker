@@ -247,6 +247,61 @@ export function classifyCapture(location, _capturedAt, includeNearestStop = true
   };
 }
 
+export function transitStopsFromMetadata(metadata) {
+  if (Array.isArray(metadata?.stops)) {
+    return metadata.stops.flatMap((stop) => {
+      const name = String(stop?.n ?? stop?.name ?? "").trim();
+      const lat = Number(stop?.a ?? stop?.lat);
+      const lon = Number(stop?.o ?? stop?.lon);
+      return name && Number.isFinite(lat) && Number.isFinite(lon) ? [{ name, lat, lon }] : [];
+    });
+  }
+
+  if (!Array.isArray(metadata?.lines)) {
+    return [];
+  }
+
+  return metadata.lines.flatMap((line) =>
+    (line?.directions ?? []).flatMap((direction) =>
+      (direction?.stops ?? []).flatMap((stop) => {
+        const name = String(stop?.name ?? "").trim();
+        const lat = Number(stop?.lat);
+        const lon = Number(stop?.lon);
+        return name && Number.isFinite(lat) && Number.isFinite(lon) ? [{ name, lat, lon }] : [];
+      })
+    )
+  );
+}
+
+export function nearestTransitStops(location, stops, limit = 5) {
+  const lat = Number(location?.lat);
+  const lon = Number(location?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Array.isArray(stops) || limit <= 0) {
+    return [];
+  }
+
+  const point = { lat, lon };
+  const nearestByName = new Map();
+  for (const stop of stops) {
+    const name = String(stop?.name ?? "").trim();
+    const stopLat = Number(stop?.lat);
+    const stopLon = Number(stop?.lon);
+    if (!name || !Number.isFinite(stopLat) || !Number.isFinite(stopLon)) {
+      continue;
+    }
+
+    const distanceMeters = haversineMeters(point, { lat: stopLat, lon: stopLon });
+    const existing = nearestByName.get(name);
+    if (!existing || distanceMeters < existing.distanceMeters) {
+      nearestByName.set(name, { name, distanceMeters });
+    }
+  }
+
+  return Array.from(nearestByName.values())
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)
+    .slice(0, Math.floor(limit));
+}
+
 export function isInGenevaBounds(point) {
   return (
     point.lat >= GENEVA_BOUNDS.minLat &&

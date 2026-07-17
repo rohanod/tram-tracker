@@ -1,5 +1,6 @@
 import { storage, useMutation } from "lakebed/client";
 import { useState } from "preact/hooks";
+import { validateTransitPayloads } from "./transit-data";
 import { AuthGate } from "./ui";
 import type { TransitDataConfig, Viewer } from "./types";
 
@@ -31,9 +32,9 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
       const geometryJson = JSON.parse(await geometry.text());
       validateTransitFiles(metadataJson, geometryJson, metadata.size, geometry.size);
       setStatus("Uploading metadata…");
-      uploadedMetadata = await storage.upload(new Blob([await metadata.arrayBuffer()], { type: "application/json" }), { public: true });
+      uploadedMetadata = await storage.upload(metadata, { public: true });
       setStatus("Uploading geometry…");
-      uploadedGeometry = await storage.upload(new Blob([await geometry.arrayBuffer()], { type: "application/json" }), { public: true });
+      uploadedGeometry = await storage.upload(geometry, { public: true });
       setStatus("Activating data…");
       const result = await activate({
         version: `${String(metadataJson.generatedAt || "data")}-${Date.now()}`,
@@ -63,10 +64,10 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
   return <main className="upload-page"><section className="upload-panel">
     <a className="back-link" href="/">← Vehicle Tracker</a>
     <h1>Upload transit data</h1>
-    <p>Private maintenance page. Upload the generated metadata and geometry files together.</p>
+    <p>Private maintenance page. Upload line info and geometry files together.</p>
     {current ? <p className="current-data">Active version: <code>{current.version}</code></p> : <p className="current-data">No active transit data.</p>}
-    <label className="file-field"><span>Transit metadata JSON</span><input type="file" accept="application/json,.json" onChange={(event) => setMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
-    <label className="file-field"><span>Transit geometry JSON</span><input type="file" accept="application/json,.json" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Line info JSON</span><input type="file" accept="application/json,.json,.info.json" onChange={(event) => setMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Line geometry</span><input type="file" accept="application/json,.json,.geojson" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
     <button className="button primary" type="button" disabled={busy || !metadata || !geometry} onClick={() => void upload()}>{busy ? "Uploading…" : "Upload and activate"}</button>
     <p className="upload-status" role="status">{status}</p>
   </section></main>;
@@ -75,8 +76,5 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
 function validateTransitFiles(metadata: any, geometry: any, metadataSize: number, geometrySize: number) {
   const max = 5 * 1024 * 1024;
   if (metadataSize > max || geometrySize > max) throw new Error("Each file must be 5 MiB or smaller.");
-  if (metadata?.v !== 1 || !Array.isArray(metadata.lines) || !Array.isArray(metadata.stops)) throw new Error("Invalid metadata file.");
-  if (geometry?.v !== 1 || !Array.isArray(geometry.features)) throw new Error("Invalid geometry file.");
-  const directionIds = new Set(metadata.lines.flatMap((line) => Array.isArray(line.d) ? line.d.map((direction) => direction.i) : []));
-  if (!geometry.features.length || geometry.features.some((feature) => !directionIds.has(feature.i))) throw new Error("Geometry does not match metadata.");
+  validateTransitPayloads(metadata, geometry);
 }

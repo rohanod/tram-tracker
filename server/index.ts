@@ -7,12 +7,15 @@ import {
   normalizeLocation,
   normalizeObservationType,
   normalizeVehicleNumber,
+  nearestTransitStops,
   roundCoordinate,
+  transitStopsFromMetadata,
   vehicleHistoryMessage
 } from "../shared/tram";
 
 const APP_NAME = "tram-tracker";
 const DEFAULT_LINES = ["14", "18", "12", "17"];
+let shortcutStopCache = { version: "", metadataUrl: "", stops: [] };
 
 export default capsule({
   name: APP_NAME,
@@ -235,6 +238,8 @@ export default capsule({
     shortcutLookupGet: endpoint({ method: "GET", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
 
     shortcutLookupPost: endpoint({ method: "POST", path: "/api/shortcut/lookup" }, (ctx, req) => lookupShortcutEntry(ctx, req)),
+
+    shortcutStopsPost: endpoint({ method: "POST", path: "/api/shortcut/stops" }, (ctx, req) => nearestShortcutStops(ctx, req)),
 
     apiEntryPost: endpoint({ method: "POST", path: "/api/entries" }, (ctx, req) => saveShortcutEntry(ctx, req))
   }
@@ -506,6 +511,61 @@ async function lookupShortcutEntry(ctx, req) {
     },
     jsonOptions(200)
   );
+}
+
+async function nearestShortcutStops(ctx, req) {
+  const auth = shortcutAuthorization(ctx, req);
+  if (!auth.ok) {
+    return json({ ok: false, reason: auth.reason, stops: [] }, jsonOptions(auth.status));
+  }
+
+  const location = locationFromInput(await inputFromRequest(req));
+  if (!location) {
+    return json({ ok: false, reason: "invalid_location", stops: [] }, jsonOptions(400));
+  }
+
+  const ownerId = ownerKeyFor(ctx);
+  if (!ownerId) {
+    return json({ ok: false, reason: "allowed_email_missing", stops: [] }, jsonOptions(503));
+  }
+
+  const transitData = await firstForOwners(ctx.db.transitData, [ownerId]);
+  if (!transitData?.metadataUrl) {
+    return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
+  }
+
+  try {
+    const stops = await shortcutTransitStops(transitData);
+    const nearest = nearestTransitStops(location, stops, 5).map((stop) => stop.name);
+    return json({ ok: true, stops: [...nearest, "Other"], dataAvailable: Boolean(nearest.length) }, jsonOptions(200));
+  } catch {
+    return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
+  }
+}
+
+async function shortcutTransitStops(transitData) {
+  const version = String(transitData.version ?? "");
+  const metadataUrl = String(transitData.metadataUrl ?? "");
+  if (
+    shortcutStopCache.version === version &&
+    shortcutStopCache.metadataUrl === metadataUrl &&
+    shortcutStopCache.stops.length
+  ) {
+    return shortcutStopCache.stops;
+  }
+
+  const response = await fetch(metadataUrl, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error("transit_metadata_unavailable");
+  }
+
+  const stops = transitStopsFromMetadata(await response.json());
+  if (!stops.length) {
+    throw new Error("transit_stops_missing");
+  }
+
+  shortcutStopCache = { version, metadataUrl, stops };
+  return stops;
 }
 
 function shortcutAuthorization(ctx, req) {

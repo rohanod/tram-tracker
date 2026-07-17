@@ -4,15 +4,13 @@
 #define color blue
 #define glyph tram
 
-#question token "What is your API token?" ""
-
 action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFInputType": "Number",
     "WFAskActionAllowsDecimalNumbers": false,
     "WFAskActionAllowsNegativeNumbers": false
 }
 
-const shortcutToken = text(token)
+const shortcutToken = prompt("API token")
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/lookup"
 
 @vehicleNumber = promptWholeNumber("Vehicle number")
