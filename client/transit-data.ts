@@ -76,6 +76,14 @@ async function readCached(): Promise<CachedPayload | null> {
 export function validateTransitPayloads(metadata: MetadataPayload, geometry: GeometryPayload) {
   if (!Array.isArray(metadata?.lines)) throw new Error("Invalid metadata file.");
   if (!Array.isArray(geometry?.features)) throw new Error("Invalid geometry file.");
+  if (
+    isCompactGeometry(geometry) &&
+    (!Number.isInteger(geometry.precision) || geometry.features.some((feature) =>
+      !feature.i || !feature.l || !Array.isArray(feature.p) || !feature.p.length || feature.p.some((path) => typeof path !== "string" || !path)
+    ))
+  ) {
+    throw new Error("Invalid polyline geometry file.");
+  }
   const directionIds = new Set(isCompactMetadata(metadata)
     ? metadata.lines.flatMap((line) => line.d.map((direction) => direction.i))
     : metadata.lines.flatMap((line) => (line.directions ?? []).map((direction) => direction.id)));
@@ -89,22 +97,17 @@ export function validateTransitPayloads(metadata: MetadataPayload, geometry: Geo
 
 function applyPayload(metadata: MetadataPayload, geometry: GeometryPayload): Record<string, LineInfo> {
   validateTransitPayloads(metadata, geometry);
-  const runtime = isCompactMetadata(metadata) && isCompactGeometry(geometry)
+  const runtime = isCompactMetadata(metadata)
     ? runtimeFromCompact(metadata, geometry)
-    : runtimeFromRaw(metadata as RawMetadata, geometry as RawGeometry);
+    : runtimeFromRaw(metadata as RawMetadata, geometry);
   setTransitData(runtime.corridors, runtime.stops);
   setDirectionOptions(runtime.directions);
   return runtime.catalog;
 }
 
-function runtimeFromCompact(metadata: CompactMetadata, geometry: CompactGeometry): RuntimeData {
+function runtimeFromCompact(metadata: CompactMetadata, geometry: GeometryPayload): RuntimeData {
   const allStops = metadata.stops.map((stop) => ({ name: stop.n, lat: stop.a, lon: stop.o }));
-  const pathsByLine = new Map<string, Array<Array<[number, number]>>>();
-  for (const feature of geometry.features) {
-    const paths = pathsByLine.get(feature.l) ?? [];
-    for (const encoded of feature.p) paths.push(decodePolyline(encoded, geometry.precision || 5));
-    pathsByLine.set(feature.l, paths);
-  }
+  const pathsByLine = geometryPathsByLine(geometry);
 
   const directions: Record<string, string[]> = {};
   const catalog: Record<string, LineInfo> = {};
@@ -124,18 +127,8 @@ function runtimeFromCompact(metadata: CompactMetadata, geometry: CompactGeometry
   return { stops: allStops, corridors, directions, catalog };
 }
 
-function runtimeFromRaw(metadata: RawMetadata, geometry: RawGeometry): RuntimeData {
-  const pathsByLine = new Map<string, Array<Array<[number, number]>>>();
-  for (const feature of geometry.features) {
-    const line = canonicalLine(feature.properties?.line);
-    if (!line) continue;
-    const paths = pathsByLine.get(line) ?? [];
-    for (const path of rawGeometryPaths(feature.geometry)) {
-      paths.push(path.map((coordinate) => [Number(coordinate[1]), Number(coordinate[0])]));
-    }
-    pathsByLine.set(line, paths);
-  }
-
+function runtimeFromRaw(metadata: RawMetadata, geometry: GeometryPayload): RuntimeData {
+  const pathsByLine = geometryPathsByLine(geometry);
   const stopByKey = new Map<string, { name: string; lat: number; lon: number }>();
   const directions: Record<string, string[]> = {};
   const catalog: Record<string, LineInfo> = {};
@@ -172,6 +165,30 @@ function runtimeFromRaw(metadata: RawMetadata, geometry: RawGeometry): RuntimeDa
     }];
   });
   return { stops: Array.from(stopByKey.values()), corridors, directions, catalog };
+}
+
+function geometryPathsByLine(geometry: GeometryPayload): Map<string, Array<Array<[number, number]>>> {
+  const pathsByLine = new Map<string, Array<Array<[number, number]>>>();
+  if (isCompactGeometry(geometry)) {
+    for (const feature of geometry.features) {
+      const line = canonicalLine(feature.l);
+      const paths = pathsByLine.get(line) ?? [];
+      for (const encoded of feature.p) paths.push(decodePolyline(encoded, geometry.precision));
+      pathsByLine.set(line, paths);
+    }
+    return pathsByLine;
+  }
+
+  for (const feature of geometry.features) {
+    const line = canonicalLine(feature.properties?.line);
+    if (!line) continue;
+    const paths = pathsByLine.get(line) ?? [];
+    for (const path of rawGeometryPaths(feature.geometry)) {
+      paths.push(path.map((coordinate) => [Number(coordinate[1]), Number(coordinate[0])]));
+    }
+    pathsByLine.set(line, paths);
+  }
+  return pathsByLine;
 }
 
 export function decodePolyline(encoded: string, precision = 5): Array<[number, number]> {

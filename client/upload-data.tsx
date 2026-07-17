@@ -67,7 +67,7 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
     <p>Private maintenance page. Upload line info and geometry files together.</p>
     {current ? <p className="current-data">Active version: <code>{current.version}</code></p> : <p className="current-data">No active transit data.</p>}
     <label className="file-field"><span>Line info JSON</span><input type="file" accept="application/json,.json,.info.json" onChange={(event) => setMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
-    <label className="file-field"><span>Line geometry</span><input type="file" accept="application/json,.json,.geojson" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Line geometry</span><input type="file" accept="application/json,.json,.geojson,.polyline.json" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
     <button className="button primary" type="button" disabled={busy || !metadata || !geometry} onClick={() => void upload()}>{busy ? "Uploading…" : "Upload and activate"}</button>
     <p className="upload-status" role="status">{status}</p>
   </section></main>;
