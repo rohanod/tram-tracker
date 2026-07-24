@@ -1,6 +1,6 @@
 export type Viewer = {
   isAllowed: boolean;
-  hasAllowedEmail: boolean;
+  hasAllowedUserId: boolean;
   isGuest: boolean;
   provider: string;
   userId: string;

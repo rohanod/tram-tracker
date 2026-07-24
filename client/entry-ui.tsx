@@ -140,12 +140,16 @@ export function LinePickerDialog({ selected, exclude = [], lineCatalog, onClose,
   </Modal>;
 }
 
-export function SettingsDialog({ defaultLines, lineCatalog, busy, onClose, onSave }: {
+export function SettingsDialog({ defaultLines, lineCatalog, busy, syncing, lastSyncLabel, onClose, onSave, onSync, onSignOut }: {
   defaultLines: string[];
   lineCatalog: Record<string, LineInfo>;
   busy: boolean;
+  syncing: boolean;
+  lastSyncLabel: string;
   onClose: () => void;
   onSave: (lines: string[]) => void;
+  onSync: () => void;
+  onSignOut: () => void;
 }) {
   const [draft, setDraft] = useState([...defaultLines]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -173,6 +177,13 @@ export function SettingsDialog({ defaultLines, lineCatalog, busy, onClose, onSav
       />
       {draft.length < 4 ? <button className="button secondary add-line" type="button" onClick={() => setEditingIndex(draft.length)}>Add line</button> : null}
       {duplicate ? <p className="form-error">Default lines must be unique.</p> : null}
+      <section className="settings-account" aria-label="Account and sync">
+        <div><strong>Account</strong><p>{lastSyncLabel}</p></div>
+        <div className="settings-account-actions">
+          <button className="button secondary compact" type="button" disabled={syncing} onClick={onSync}>{syncing ? "Syncing…" : "Sync now"}</button>
+          <button className="button secondary compact" type="button" onClick={onSignOut}>Sign out</button>
+        </div>
+      </section>
     </Modal>
     {editingIndex !== null ? <LinePickerDialog selected={draft[editingIndex] || ""} lineCatalog={lineCatalog} onClose={() => setEditingIndex(null)} onSelect={(line) => {
       const next = [...draft];

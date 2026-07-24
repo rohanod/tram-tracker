@@ -42,6 +42,25 @@ async function loadRouteStateModule() {
   return import("file://" + join(dir, "route-state.mjs"));
 }
 
+async function loadAuthModule() {
+  const dir = await mkdtemp(join(tmpdir(), "tram-auth-"));
+  const auth = await readFile(new URL("../shared/auth.ts", import.meta.url), "utf8");
+  await writeFile(join(dir, "auth.mjs"), auth);
+  return import("file://" + join(dir, "auth.mjs"));
+}
+
+test("auth uses immutable identity and offline cache only while offline", async () => {
+  const { canUseTracker, configuredUserId, isAllowedIdentity, legacyOwnerId } = await loadAuthModule();
+
+  assert.equal(configuredUserId(" google:123 "), "google:123");
+  assert.equal(legacyOwnerId(" Rohan@Example.com "), "allowed:rohan@example.com");
+  assert.equal(isAllowedIdentity({ userId: "google:123", provider: "google", isGuest: false }, "google:123"), true);
+  assert.equal(isAllowedIdentity({ userId: "google:123", provider: "google", isGuest: true }, "google:123"), false);
+  assert.equal(isAllowedIdentity({ userId: "google:other", provider: "google", isGuest: false }, "google:123"), false);
+  assert.equal(canUseTracker({ isLocalGuest: false, isAllowed: false, isOnline: true, priorAuthorized: true, cachedAccessAllowed: true }), false);
+  assert.equal(canUseTracker({ isLocalGuest: false, isAllowed: false, isOnline: false, priorAuthorized: true, cachedAccessAllowed: true }), true);
+});
+
 test("vehicle numbers and directions normalize", async () => {
   const { cleanVehicleNumber, directionOptionsForLine, headsignForLineAndLeg, isValidVehicleNumber, legLabelForLine, normalizeDirection, normalizeLine, normalizeObservationType, vehicleHistoryMessage } = await loadSharedModule();
 

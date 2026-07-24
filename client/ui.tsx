@@ -8,16 +8,16 @@ let modalId = 0;
 export function AuthGate({ authLoading, viewer, isOnline, priorAuthorized }: { authLoading: boolean; viewer?: Viewer; isOnline: boolean; priorAuthorized: boolean }) {
   let title = "Checking access";
   let body = "Confirming the current session.";
-  if (!isOnline && !priorAuthorized) {
+  if (!authLoading && !isOnline && !priorAuthorized) {
     title = "Sign in online first";
     body = "This device needs one authorized Google sign-in before offline use.";
-  } else if (viewer && !viewer.hasAllowedEmail) {
+  } else if (!authLoading && viewer && !viewer.hasAllowedUserId) {
     title = "Allowlist missing";
-    body = "Set ALLOWED_EMAIL, then redeploy.";
-  } else if (viewer?.isGuest) {
+    body = viewer.userId ? `Set ALLOWED_USER_ID to ${viewer.userId}, then redeploy.` : "Set ALLOWED_USER_ID, then redeploy.";
+  } else if (!authLoading && (!viewer || viewer.isGuest)) {
     title = "Private tracker";
     body = "Sign in with the allowed Google account.";
-  } else if (viewer && !viewer.isAllowed) {
+  } else if (!authLoading && viewer && !viewer.isAllowed) {
     title = "Account not allowed";
     body = viewer.email || "This Google account is not on the allowlist.";
   }

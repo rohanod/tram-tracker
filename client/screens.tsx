@@ -8,8 +8,8 @@ import type { LineInfo, LocalEntry } from "./types";
 export type ReviewFilters = { query: string; line: string; type: string; dateFrom: string; dateTo: string; sort: string };
 
 export function TrackerScreen({
-  entries, filters, lineCatalog, isOnline, isLoading, loadError, lastSyncLabel, pendingCount, syncing,
-  onChangeFilters, onNew, onOpen, onOpenFilters, onOpenSettings, onRetry, onSignOut, onSync
+  entries, filters, lineCatalog, isOnline, isLoading, loadError, lastSyncLabel, pendingCount,
+  onChangeFilters, onNew, onOpen, onOpenFilters, onOpenSettings, onRetry
 }: {
   entries: LocalEntry[];
   filters: ReviewFilters;
@@ -19,15 +19,12 @@ export function TrackerScreen({
   loadError: string;
   lastSyncLabel: string;
   pendingCount: number;
-  syncing: boolean;
   onChangeFilters: (filters: ReviewFilters) => void;
   onNew: () => void;
   onOpen: (entry: LocalEntry) => void;
   onOpenFilters: () => void;
   onOpenSettings: () => void;
   onRetry: () => void;
-  onSignOut: () => void;
-  onSync: () => void;
 }) {
   const [page, setPage] = useState(1);
   const [compactHeight, setCompactHeight] = useState(() => typeof window !== "undefined" && window.innerHeight <= 700);
@@ -57,17 +54,6 @@ export function TrackerScreen({
               <span>{isOnline ? "Online" : "Offline"}</span>
               <span>·</span>
               <span>{pendingCount ? `${pendingCount} pending` : lastSyncLabel}</span>
-              {pendingCount ? <>
-                <span>·</span>
-                <button
-                  className="status-sync"
-                  type="button"
-                  disabled={!isOnline || syncing}
-                  aria-label={syncing ? "Syncing pending entries" : `Sync ${pendingCount} pending ${pendingCount === 1 ? "entry" : "entries"} now`}
-                  onClick={onSync}
-                >{syncing ? "Syncing…" : "Sync"}</button>
-              </> : null}
-              <button className="status-sign-out" type="button" onClick={onSignOut}>Sign out</button>
             </div>
           </div>
           <div className="header-actions">

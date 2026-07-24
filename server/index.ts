@@ -1,4 +1,5 @@
 import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
+import { configuredUserId, isAllowedIdentity, legacyOwnerId } from "../shared/auth";
 import {
   classifyCapture,
   isValidVehicleNumber,
@@ -56,6 +57,11 @@ export default capsule({
       geometryKey: string(),
       geometryUrl: string(),
       geometrySize: string()
+    }).index("by_owner", ["ownerId"]),
+    transitStopIndexes: table({
+      ownerId: string(),
+      version: string(),
+      payload: string()
     }).index("by_owner", ["ownerId"])
   },
 
@@ -68,21 +74,21 @@ export default capsule({
         return [];
       }
 
-      return (await rowsForOwners(ctx.db.tripEntries, ownerIdsFor(ctx, viewer)))
+      return (await rowsForOwners(ctx.db.tripEntries, [primaryOwnerIdFor(ctx, viewer)]))
         .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)));
     }),
 
     settings: query(async (ctx) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) return { defaultLines: DEFAULT_LINES };
-      const row = await firstForOwners(ctx.db.userSettings, ownerIdsFor(ctx, viewer));
+      const row = await firstForOwners(ctx.db.userSettings, [primaryOwnerIdFor(ctx, viewer)]);
       return { defaultLines: parseDefaultLines(row?.defaultLines) };
     }),
 
     transitData: query(async (ctx) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) return null;
-      const row = await firstForOwners(ctx.db.transitData, ownerIdsFor(ctx, viewer));
+      const row = await firstForOwners(ctx.db.transitData, [primaryOwnerIdFor(ctx, viewer)]);
       return row ? transitDataResponse(row) : null;
     })
   },
@@ -99,7 +105,7 @@ export default capsule({
         return prepared;
       }
 
-      const existing = await entryByClientId(ctx, ownerIdsFor(ctx, viewer), prepared.clientEntryId);
+      const existing = await entryByClientId(ctx, [primaryOwnerIdFor(ctx, viewer)], prepared.clientEntryId);
 
       if (existing) {
         await ctx.db.tripEntries.update(existing.id, prepared.row);
@@ -140,13 +146,24 @@ export default capsule({
       return { ok: true, id: entry.id };
     }),
 
+    migrateLegacyOwner: mutation(async (ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
+
+      const fromOwnerId = legacyOwnerIdFor(ctx);
+      const toOwnerId = primaryOwnerIdFor(ctx, viewer);
+      if (!fromOwnerId || fromOwnerId === toOwnerId) return { ok: true, moved: 0, merged: 0 };
+
+      return { ok: true, ...(await migrateLegacyOwnerRows(ctx, fromOwnerId, toOwnerId)) };
+    }),
+
     migrateDirections: mutation(async (ctx) => {
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) {
         return { ok: false, reason: "unauthorized" };
       }
 
-      return { ok: true, updated: await migrateDirectionRows(ctx, ownerIdsFor(ctx, viewer)) };
+      return { ok: true, updated: await migrateDirectionRows(ctx, [primaryOwnerIdFor(ctx, viewer)]) };
     }),
 
     deleteEntry: mutation(async (ctx, id) => {
@@ -157,7 +174,7 @@ export default capsule({
 
       const idOrClientEntryId = String(id ?? "");
       const byId = await ctx.db.tripEntries.get(idOrClientEntryId);
-      const entry = byId || await entryByClientId(ctx, ownerIdsFor(ctx, viewer), idOrClientEntryId);
+      const entry = byId || await entryByClientId(ctx, [primaryOwnerIdFor(ctx, viewer)], idOrClientEntryId);
 
       if (!entry || !ownsRow(ctx, viewer, entry)) {
         return { ok: false, reason: "not_found" };
@@ -246,38 +263,38 @@ export default capsule({
 });
 
 function viewerFor(ctx) {
-  const allowedEmail = String(ctx.env.ALLOWED_EMAIL ?? "").trim().toLowerCase();
-  const email = String(ctx.auth.email ?? "").trim().toLowerCase();
-  const isGoogle = ctx.auth.provider === "google";
-  const isAllowed = Boolean(allowedEmail && email && isGoogle && email === allowedEmail);
-
-  return {
-    isAllowed,
-    hasAllowedEmail: Boolean(allowedEmail),
+  const allowedUserId = configuredUserId(ctx.env.ALLOWED_USER_ID);
+  const identity = {
     isGuest: Boolean(ctx.auth.isGuest),
     provider: String(ctx.auth.provider ?? ""),
-    userId: String(ctx.auth.userId ?? ""),
+    userId: configuredUserId(ctx.auth.userId)
+  };
+
+  return {
+    isAllowed: isAllowedIdentity(identity, allowedUserId),
+    hasAllowedUserId: Boolean(allowedUserId),
+    isGuest: identity.isGuest,
+    provider: identity.provider,
+    userId: identity.userId,
     displayName: String(ctx.auth.displayName ?? ""),
-    email
+    email: String(ctx.auth.email ?? "").trim().toLowerCase()
   };
 }
 
+function primaryOwnerIdFor(_ctx, viewer) {
+  return configuredUserId(viewer?.userId);
+}
+
+function legacyOwnerIdFor(ctx) {
+  return legacyOwnerId(ctx.env.LEGACY_OWNER_EMAIL);
+}
+
 function ownerKeyFor(ctx) {
-  const allowedEmail = String(ctx.env.ALLOWED_EMAIL ?? "").trim().toLowerCase();
-  return allowedEmail ? "allowed:" + allowedEmail : "";
-}
-
-function primaryOwnerIdFor(ctx, viewer) {
-  return ownerKeyFor(ctx) || String(viewer?.userId ?? "");
-}
-
-function ownerIdsFor(ctx, viewer) {
-  const ids = [ownerKeyFor(ctx), String(viewer?.userId ?? "")].filter(Boolean);
-  return Array.from(new Set(ids));
+  return configuredUserId(ctx.env.ALLOWED_USER_ID);
 }
 
 function ownsRow(ctx, viewer, row) {
-  return Boolean(row && ownerIdsFor(ctx, viewer).includes(String(row.ownerId ?? "")));
+  return Boolean(row && String(row.ownerId ?? "") === primaryOwnerIdFor(ctx, viewer));
 }
 
 async function rowsForOwners(tableRef, ownerIds) {
@@ -321,6 +338,73 @@ async function entryByClientId(ctx, ownerIds, clientEntryId) {
     if (entry) return entry;
   }
   return null;
+}
+
+async function migrateLegacyOwnerRows(ctx, fromOwnerId, toOwnerId) {
+  let moved = 0;
+  let merged = 0;
+
+  for (const entry of await rowsForOwners(ctx.db.tripEntries, [fromOwnerId])) {
+    const existing = await ctx.db.tripEntries
+      .withIndex("by_owner_client", (q) => q.eq("ownerId", toOwnerId).eq("clientEntryId", entry.clientEntryId))
+      .first();
+    if (!existing) {
+      await ctx.db.tripEntries.update(entry.id, { ownerId: toOwnerId });
+      moved += 1;
+      continue;
+    }
+
+    if (rowTimestamp(entry) > rowTimestamp(existing)) {
+      await ctx.db.tripEntries.update(existing.id, { ...rowData(entry), ownerId: toOwnerId });
+    }
+    await ctx.db.tripEntries.delete(entry.id);
+    merged += 1;
+  }
+
+  for (const tableRef of [ctx.db.userSettings, ctx.db.transitData, ctx.db.transitStopIndexes]) {
+    const result = await migrateSingletonOwner(tableRef, fromOwnerId, toOwnerId);
+    moved += result.moved;
+    merged += result.merged;
+  }
+
+  return { moved, merged };
+}
+
+async function migrateSingletonOwner(tableRef, fromOwnerId, toOwnerId) {
+  const legacyRows = await rowsForOwners(tableRef, [fromOwnerId]);
+  let target = await firstForOwners(tableRef, [toOwnerId]);
+  let moved = 0;
+  let merged = 0;
+
+  for (const row of legacyRows) {
+    if (!target) {
+      await tableRef.update(row.id, { ownerId: toOwnerId });
+      target = row;
+      moved += 1;
+      continue;
+    }
+
+    if (rowTimestamp(row) > rowTimestamp(target)) {
+      await tableRef.update(target.id, { ...rowData(row), ownerId: toOwnerId });
+      target = row;
+    }
+    await tableRef.delete(row.id);
+    merged += 1;
+  }
+
+  return { moved, merged };
+}
+
+function rowData(row) {
+  const data = { ...row };
+  delete data.id;
+  delete data.createdAt;
+  delete data.updatedAt;
+  return data;
+}
+
+function rowTimestamp(row) {
+  return String(row?.updatedAt ?? row?.savedAt ?? row?.capturedAt ?? row?.createdAt ?? "");
 }
 
 async function migrateDirectionRows(ctx, ownerIds) {
@@ -459,7 +543,7 @@ async function saveShortcutEntry(ctx, req) {
 
   const ownerId = ownerKeyFor(ctx);
   if (!ownerId) {
-    return json({ ok: false, reason: "allowed_email_missing" }, jsonOptions(503));
+    return json({ ok: false, reason: "allowed_user_id_missing" }, jsonOptions(503));
   }
 
   const rawInput = await inputFromRequest(req);
@@ -494,7 +578,7 @@ async function lookupShortcutEntry(ctx, req) {
 
   const ownerId = ownerKeyFor(ctx);
   if (!ownerId) {
-    return json({ ok: false, reason: "allowed_email_missing", message: "" }, jsonOptions(503));
+    return json({ ok: false, reason: "allowed_user_id_missing", message: "" }, jsonOptions(503));
   }
 
   const input = await inputFromRequest(req);
@@ -526,7 +610,7 @@ async function nearestShortcutStops(ctx, req) {
 
   const ownerId = ownerKeyFor(ctx);
   if (!ownerId) {
-    return json({ ok: false, reason: "allowed_email_missing", stops: [] }, jsonOptions(503));
+    return json({ ok: false, reason: "allowed_user_id_missing", stops: [] }, jsonOptions(503));
   }
 
   const transitData = await firstForOwners(ctx.db.transitData, [ownerId]);

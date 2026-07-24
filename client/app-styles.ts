@@ -166,6 +166,9 @@ button:disabled { cursor: default; opacity: .42; }
 .drag-handle:active { cursor: grabbing; }
 .remove-line svg { width: 20px; height: 20px; }
 .add-line { width: 100%; margin-top: 12px; }
+.settings-account { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-account p { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 13px; }
+.settings-account-actions { display: flex; gap: 8px; }
 .filter-dialog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .filter-dialog-grid .full { grid-column: 1 / -1; }
 .filter-dialog-grid .filter-control, .filter-dialog-grid .full .filter-control { width: 100%; }

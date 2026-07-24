@@ -72,7 +72,7 @@ export function viewerDebug(viewer?: Viewer) {
 
   return {
     isAllowed: viewer.isAllowed,
-    hasAllowedEmail: viewer.hasAllowedEmail,
+    hasAllowedUserId: viewer.hasAllowedUserId,
     isGuest: viewer.isGuest,
     provider: viewer.provider,
     userId: maskIdentifier(viewer.userId),
@@ -94,30 +94,19 @@ export function accessCacheDebug(cache: AccessCache | null) {
   };
 }
 
-export function shouldClearAccessCacheForViewer(viewer: Viewer | undefined, cachedAccessAllowed: boolean) {
-  if (!viewer || viewer.isGuest || viewer.isAllowed || !cachedAccessAllowed) {
+export function shouldClearAccessCacheForViewer(viewer: Viewer | undefined, cachedAccessAllowed: boolean, isOnline: boolean) {
+  if (!isOnline || !viewer || viewer.isGuest || viewer.isAllowed || !cachedAccessAllowed || !viewer.hasAllowedUserId) {
     return false;
   }
 
   const cache = readAccessCacheMirror();
-  if (!cache?.allowed || viewer.provider !== "google" || !viewer.hasAllowedEmail) {
+  if (!cache?.allowed || viewer.provider !== "google") {
     return false;
   }
 
-  const viewerEmail = String(viewer.email ?? "").trim().toLowerCase();
   const viewerUserId = String(viewer.userId ?? "").trim();
-  const cachedEmail = String(cache.email ?? "").trim().toLowerCase();
   const cachedUserId = String(cache.userId ?? "").trim();
-
-  if (viewerEmail && cachedEmail && viewerEmail !== cachedEmail) {
-    return true;
-  }
-
-  if (viewerUserId && cachedUserId && viewerUserId !== cachedUserId) {
-    return true;
-  }
-
-  return Boolean(viewerEmail && cachedEmail && viewerEmail === cachedEmail && !viewer.isAllowed);
+  return Boolean(viewerUserId && cachedUserId);
 }
 
 function maskEmail(value: string) {

@@ -1,5 +1,6 @@
 import { signOut, useAuth, useMutation, useQuery } from "lakebed/client";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { canUseTracker as trackerAccessAllowed } from "../shared/auth";
 import { classifyCapture, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, normalizeObservationType, normalizeVehicleNumber, vehicleHistoryMessage } from "../shared/tram";
 import { DEFAULT_REVIEW_FILTERS } from "../shared/review";
 import { APP_CSS } from "./app-styles";
@@ -26,6 +27,14 @@ const SETTINGS_PENDING_KEY = "default-lines-pending-v1";
 
 export function App() {
   const auth = useAuth();
+  if (auth.isLoading) {
+    const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+    return <><style>{DESIGN_SYSTEM_CSS + APP_CSS}</style><AuthGate authLoading viewer={undefined} isOnline={isOnline} priorAuthorized={false} /></>;
+  }
+  return <TrackerApp auth={auth} />;
+}
+
+function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const viewer = useQuery<Viewer>("viewer") as Viewer | undefined;
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
   const serverSettings = useQuery<UserSettings>("settings") as UserSettings | undefined;
@@ -33,6 +42,7 @@ export function App() {
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
   const saveSettings = useMutation<[settings: UserSettings], MutationResult & UserSettings>("saveSettings");
+  const migrateLegacyOwner = useMutation<[], MutationResult>("migrateLegacyOwner");
   const migrateDirections = useMutation<[], MutationResult>("migrateDirections");
 
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
@@ -57,11 +67,19 @@ export function App() {
   const [loadError, setLoadError] = useState("");
   const [toast, setToast] = useState("");
   const syncInFlight = useRef(false);
-  const migrated = useRef(false);
+  const ownerMigrationStarted = useRef(false);
+  const directionsMigrated = useRef(false);
   const prefillApplied = useRef(false);
 
   const isLocalGuest = Boolean(viewer?.isGuest && isLocalHostname(window.location.hostname));
-  const canUseTracker = Boolean(isLocalGuest || viewer?.isAllowed || (!isOnline && priorAuthorized && cachedAccessAllowed));
+  const offlineAccessAllowed = !isOnline && priorAuthorized && cachedAccessAllowed;
+  const canUseTracker = trackerAccessAllowed({
+    isLocalGuest,
+    isAllowed: Boolean(viewer?.isAllowed),
+    isOnline,
+    priorAuthorized,
+    cachedAccessAllowed
+  });
   const visibleEntries = useMemo(() => mergeVisibleEntries(serverEntries, localEntries), [serverEntries, localEntries]);
 
   useEffect(() => {
@@ -104,11 +122,11 @@ export function App() {
       setCachedAccessAllowed(true);
       void writeMeta(PRIOR_AUTH_KEY, "true");
       void writeAccessCache(viewer);
-    } else if (shouldClearAccessCacheForViewer(viewer, cachedAccessAllowed) && accessCacheHydrated && !auth.isLoading) {
+    } else if (shouldClearAccessCacheForViewer(viewer, cachedAccessAllowed, isOnline) && accessCacheHydrated && !auth.isLoading) {
       setCachedAccessAllowed(false);
       void clearAccessCache();
     }
-  }, [viewer?.isAllowed, viewer?.isGuest, viewer?.email, cachedAccessAllowed, accessCacheHydrated, auth.isLoading]);
+  }, [viewer?.isAllowed, viewer?.isGuest, viewer?.userId, viewer?.hasAllowedUserId, cachedAccessAllowed, accessCacheHydrated, auth.isLoading, isOnline]);
 
   useEffect(() => {
     if (!viewer?.isAllowed) return;
@@ -116,9 +134,16 @@ export function App() {
   }, [viewer?.isAllowed, serverEntries.map((entry) => `${entry.id}:${entry.updatedAt}:${entry.savedLine}:${entry.savedLeg}`).join("|")]);
 
   useEffect(() => {
-    if (!viewer?.isAllowed || migrated.current) return;
-    migrated.current = true;
-    void migrateDirections();
+    if (!viewer?.isAllowed || ownerMigrationStarted.current) return;
+    ownerMigrationStarted.current = true;
+    void migrateLegacyOwner().then((result) => {
+      if (!result.ok || directionsMigrated.current) return;
+      directionsMigrated.current = true;
+      return migrateDirections();
+    }).catch((error) => {
+      ownerMigrationStarted.current = false;
+      debugSync("owner-migration-error", { error: errorMessage(error) });
+    });
   }, [viewer?.isAllowed]);
 
   useEffect(() => {
@@ -257,23 +282,22 @@ export function App() {
   if (window.location.pathname === "/upload-data" || window.location.hash === "#/upload-data") {
     return <>{styles}<UploadDataPage authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
   }
-  if (!canUseTracker) return <>{styles}<AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} /></>;
+  if (!canUseTracker) return <>{styles}<AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={offlineAccessAllowed} /></>;
 
   return <>{styles}
     <TrackerScreen
       entries={visibleEntries} filters={filters} lineCatalog={lineCatalog} isOnline={isOnline}
       isLoading={!localHydrated || (!viewer && auth.isLoading)} loadError={loadError}
-      lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} pendingCount={pendingCount} syncing={syncing}
+      lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} pendingCount={pendingCount}
       onChangeFilters={setFilters} onNew={openCreate}
       onOpen={(entry) => { setActiveEntry(entry); setDialog("details"); }}
       onOpenFilters={() => setDialog("filters")} onOpenSettings={() => setDialog("settings")}
       onRetry={() => { setLoadError(""); setSyncKick((value) => value + 1); void loadTransitData(transitConfig).then((catalog) => catalog && setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog })); }}
-      onSignOut={() => signOut()} onSync={() => isLocalGuest ? setToast("Local guest entries stay on this device.") : void runSync(true)}
     />
     {dialog === "create" ? <EntryDialog mode="create" initialValue={createSeed} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("")} onSubmit={(value) => void createEntry(value)} /> : null}
     {dialog === "edit" && activeEntry ? <EntryDialog mode="edit" entry={activeEntry} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("details")} onSubmit={(value) => void updateEntry(value)} /> : null}
     {dialog === "details" && activeEntry ? <EntryDetailsDialog entry={activeEntry} lineCatalog={lineCatalog} onClose={() => setDialog("")} onEdit={() => { setDialogError(""); setDialog("edit"); }} onDelete={() => void removeEntry(activeEntry)} /> : null}
-    {dialog === "settings" ? <SettingsDialog defaultLines={defaultLines} lineCatalog={lineCatalog} busy={busy} onClose={() => setDialog("")} onSave={(lines) => void updateDefaults(lines)} /> : null}
+    {dialog === "settings" ? <SettingsDialog defaultLines={defaultLines} lineCatalog={lineCatalog} busy={busy} syncing={syncing} lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} onClose={() => setDialog("")} onSave={(lines) => void updateDefaults(lines)} onSync={() => isLocalGuest ? setToast("Local guest entries stay on this device.") : void runSync(true)} onSignOut={() => signOut()} /> : null}
     {dialog === "filters" ? <FiltersDialog filters={filters} lineCatalog={lineCatalog} onClose={() => setDialog("")} onApply={(next) => { setFilters(next); setDialog(""); }} /> : null}
     {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}
   </>;
