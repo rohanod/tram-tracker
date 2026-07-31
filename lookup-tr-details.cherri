@@ -4,13 +4,15 @@
 #define color blue
 #define glyph tram
 
+#question apiToken "What is the Vehicle Tracker API token?" ""
+
 action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFInputType": "Number",
     "WFAskActionAllowsDecimalNumbers": false,
     "WFAskActionAllowsNegativeNumbers": false
 }
 
-const shortcutToken = prompt("API token")
+const shortcutToken = text(apiToken)
 const apiURL = "https://rapid-signal-1f4a040df6.lakebed.app/api/shortcut/lookup"
 
 @vehicleNumber = promptWholeNumber("Vehicle number")
@@ -36,8 +38,19 @@ const response = jsonRequest(apiURL, "POST", {
     "Accept": "application/json"
 })
 
-const rawHistoryMessage = getValue(response, "message")
-const historyMessage = getText(rawHistoryMessage)
-if historyMessage != "" {
-    show("{historyMessage}")
+const historyEntries = getValue(response, "entries")
+const historyCount = count(historyEntries)
+if historyCount == 0 {
+    show("No saved observations for vehicle {@vehicleNumber}.")
+    stop()
 }
+
+const rawSummary = getValue(response, "summary")
+const summary = getText(rawSummary)
+const selectedEntry = chooseFromList(historyEntries, "Vehicle {@vehicleNumber} — {summary}")
+@selectedLabel = getText(selectedEntry)
+const rawHistoryDetails = getValue(response, "details")
+const historyDetails = getDictionary(rawHistoryDetails)
+const rawSelectedDetails = getValue(historyDetails, @selectedLabel)
+const selectedDetails = getText(rawSelectedDetails)
+show("{selectedDetails}")

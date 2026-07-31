@@ -98,6 +98,38 @@ export function vehicleHistoryMessage(entry) {
   return prefix + ": " + (capturedAt ? capturedAt + ", " : "") + trip + ".";
 }
 
+export function vehicleLookupHistory(entries) {
+  const sorted = Array.isArray(entries)
+    ? [...entries].sort((a, b) => String(b?.capturedAt ?? "").localeCompare(String(a?.capturedAt ?? "")))
+    : [];
+  let ridden = 0;
+  let spotted = 0;
+  const labels = [];
+  const details = {};
+  const duplicateCounts = new Map();
+
+  for (const entry of sorted) {
+    const observationType = normalizeObservationType(entry?.observationType);
+    if (observationType === "been_on") ridden += 1;
+    else spotted += 1;
+
+    const typeLabel = OBSERVATION_LABELS[observationType];
+    const capturedAt = formatCapturedAtForMessage(entry?.capturedAt) || "Unknown date";
+    const baseLabel = capturedAt + " — " + typeLabel;
+    const duplicate = (duplicateCounts.get(baseLabel) ?? 0) + 1;
+    duplicateCounts.set(baseLabel, duplicate);
+    const label = duplicate === 1 ? baseLabel : baseLabel + " (" + duplicate + ")";
+    labels.push(label);
+    details[label] = vehicleLookupDetail(entry, typeLabel, capturedAt);
+  }
+
+  return {
+    summary: "R:" + ridden + " | S:" + spotted + " | T:" + sorted.length,
+    entries: labels,
+    details
+  };
+}
+
 export function legLabelForLine(line, leg) {
   return directionLabelForLine(line, leg);
 }
@@ -338,6 +370,24 @@ function uniqueValues(values) {
 
 function lineLabelForMessage(line) {
   return line === "unclassified" ? LINE_LABELS.unclassified : "Line " + line;
+}
+
+function vehicleLookupDetail(entry, typeLabel, capturedAt) {
+  const line = normalizeLine(entry?.savedLine ?? entry?.line);
+  const direction = normalizeDirection(entry?.savedDirection ?? entry?.direction ?? entry?.savedLeg ?? entry?.leg, line);
+  const detail = [
+    typeLabel,
+    capturedAt,
+    lineLabelForMessage(line),
+    directionLabelForLine(line, direction),
+    "Nearest stop: " + (String(entry?.nearestStopName ?? "").trim() || "Not saved")
+  ];
+  const lat = String(entry?.lat ?? "").trim();
+  const lon = String(entry?.lon ?? "").trim();
+  const distanceMeters = String(entry?.distanceMeters ?? "").trim();
+  if (lat && lon) detail.push("Coordinates: " + lat + ", " + lon);
+  if (distanceMeters) detail.push("Distance to route: " + distanceMeters + " m");
+  return detail.join("\n");
 }
 
 function formatCapturedAtForMessage(capturedAt) {

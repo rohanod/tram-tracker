@@ -90,6 +90,62 @@ test("vehicle numbers and directions normalize", async () => {
   assert.equal(vehicleHistoryMessage({ savedLine: "18", direction: "Grand-Lancy, Palettes", observationType: "been_on", capturedAt: "2026-06-17T14:45:00.000Z" }), "Been on before: 17 Jun 2026 at 16:45, Line 18, To Grand-Lancy, Palettes.");
 });
 
+test("vehicle lookup history lists every instance with counts and details", async () => {
+  const { vehicleLookupHistory } = await loadSharedModule();
+  const history = vehicleLookupHistory([
+    {
+      capturedAt: "2026-06-17T06:30:00.000Z",
+      observationType: "seen",
+      savedLine: "14",
+      savedLeg: "from_home",
+      nearestStopName: "Genève, Cornavin",
+      lat: "46.2100",
+      lon: "6.1420",
+      distanceMeters: "18"
+    },
+    {
+      capturedAt: "2026-06-18T14:45:00.000Z",
+      observationType: "been_on",
+      savedLine: "18",
+      savedLeg: "Grand-Lancy, Palettes",
+      nearestStopName: "Genève, Bel-Air"
+    },
+    {
+      capturedAt: "2026-06-16T10:00:00.000Z",
+      observationType: "seen",
+      savedLine: "12",
+      savedLeg: "unclassified",
+      nearestStopName: ""
+    }
+  ]);
+
+  assert.equal(history.summary, "R:1 | S:2 | T:3");
+  assert.deepEqual(history.entries, [
+    "18 Jun 2026 at 16:45 — Been on",
+    "17 Jun 2026 at 08:30 — Seen",
+    "16 Jun 2026 at 12:00 — Seen"
+  ]);
+  assert.equal(
+    history.details["17 Jun 2026 at 08:30 — Seen"],
+    "Seen\n17 Jun 2026 at 08:30\nLine 14\nTo Bernex, Vailly\nNearest stop: Genève, Cornavin\nCoordinates: 46.2100, 6.1420\nDistance to route: 18 m"
+  );
+});
+
+test("vehicle lookup history keeps same-minute instances selectable", async () => {
+  const { vehicleLookupHistory } = await loadSharedModule();
+  const history = vehicleLookupHistory([
+    { capturedAt: "2026-06-17T06:30:10.000Z", observationType: "seen", savedLine: "14", nearestStopName: "First" },
+    { capturedAt: "2026-06-17T06:30:40.000Z", observationType: "seen", savedLine: "14", nearestStopName: "Second" }
+  ]);
+
+  assert.deepEqual(history.entries, [
+    "17 Jun 2026 at 08:30 — Seen",
+    "17 Jun 2026 at 08:30 — Seen (2)"
+  ]);
+  assert.match(history.details[history.entries[0]], /Nearest stop: Second/);
+  assert.match(history.details[history.entries[1]], /Nearest stop: First/);
+});
+
 test("runtime transit data classifies one line and keeps overlaps manual", async () => {
   const { classifyCapture, MATCH_RADIUS_METERS, STOP_MATCH_RADIUS_METERS, setTransitData } = await loadSharedModule();
   const stop = { name: "Genève, Test", lat: 46.2, lon: 6.14 };

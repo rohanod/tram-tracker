@@ -628,11 +628,13 @@ async function lookupShortcutEntry(ctx, req) {
     return json({ ok: false, reason: "invalid_vehicle_number", message: "" }, jsonOptions(400));
   }
 
+  const entries = await vehicleEntries(ctx, ownerId, vehicleNumber, "");
   return json(
     {
       ok: true,
       vehicleNumber,
-      message: vehicleHistoryMessage(await latestVehicleEntry(ctx, ownerId, vehicleNumber, ""))
+      message: vehicleHistoryMessage(entries[0]),
+      ...vehicleLookupHistory(entries)
     },
     jsonOptions(200)
   );
@@ -735,13 +737,17 @@ function shortcutEntryResponse(id, prepared, priorEntry) {
   };
 }
 
-async function latestVehicleEntry(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
+async function vehicleEntries(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
   const entries = await ctx.db.tripEntries
     .withIndex("by_owner_vehicle", (q) => q.eq("ownerId", ownerId).eq("vehicleNumber", vehicleNumber))
     .collect();
   return entries
     .filter((entry) => String(entry.clientEntryId ?? "") !== String(excludedClientEntryId ?? ""))
-    .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)))[0];
+    .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)));
+}
+
+async function latestVehicleEntry(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
+  return (await vehicleEntries(ctx, ownerId, vehicleNumber, excludedClientEntryId))[0];
 }
 
 function jsonOptions(status) {

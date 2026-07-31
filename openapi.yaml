@@ -49,7 +49,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -100,7 +100,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -146,7 +146,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -155,7 +155,7 @@ paths:
     get:
       operationId: lookupVehicleHistoryFromQuery
       summary: Look up vehicle history from query parameters
-      description: Returns the latest saved history message for a vehicle, or an empty message when it has not been saved before.
+      description: Returns every saved observation for a vehicle as compact menu labels, detail text, and ridden/spotted/total counts.
       parameters:
         - $ref: "#/components/parameters/TokenQuery"
         - $ref: "#/components/parameters/VehicleNumberQuery"
@@ -182,7 +182,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -190,7 +190,7 @@ paths:
     post:
       operationId: lookupVehicleHistory
       summary: Look up vehicle history
-      description: Returns the latest saved history message for a vehicle, or an empty message when it has not been saved before.
+      description: Returns every saved observation for a vehicle as compact menu labels, detail text, and ridden/spotted/total counts.
       security:
         - ShortcutToken: []
       requestBody:
@@ -222,7 +222,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -263,7 +263,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_EMAIL`."
+          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
           content:
             application/json:
               schema:
@@ -542,6 +542,9 @@ components:
         - ok
         - vehicleNumber
         - message
+        - summary
+        - entries
+        - details
       properties:
         ok:
           type: boolean
@@ -551,7 +554,21 @@ components:
           pattern: "^\\d{3,4}$"
         message:
           type: string
-          description: Latest Been on before or Seen before message. Empty when no prior entry exists.
+          description: Latest Been on before or Seen before message. Retained for older Shortcut versions.
+        summary:
+          type: string
+          pattern: "^R:\\d+ \\| S:\\d+ \\| T:\\d+$"
+          description: Counts of ridden, spotted, and total observations.
+        entries:
+          type: array
+          items:
+            type: string
+          description: Newest-first menu labels containing Zurich date, time, and observation type. Same-minute duplicates receive a numeric suffix.
+        details:
+          type: object
+          additionalProperties:
+            type: string
+          description: Detail text keyed by the corresponding value in entries.
     NearestStopsRequest:
       type: object
       additionalProperties: true
@@ -601,7 +618,7 @@ components:
           enum:
             - unauthorized
             - shortcut_token_missing
-            - allowed_email_missing
+            - allowed_user_id_missing
             - invalid_vehicle_number
             - missing_client_entry_id
             - missing_owner
