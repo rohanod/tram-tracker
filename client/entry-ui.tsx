@@ -59,7 +59,7 @@ export function EntryDialog({
     if (savedLeg !== "other" && !directions.includes(savedLeg)) setSavedLeg("");
   }, [savedLine, directions, savedLeg]);
 
-  const title = mode === "create" ? "Create saved entry" : "Edit saved entry";
+  const title = mode === "create" ? "Save new vehicle" : "Edit saved vehicle";
   const subtitle = mode === "create"
     ? "Choose a vehicle, line, and direction."
     : `Vehicle ${entry?.vehicleNumber || ""} · Saved ${formatEntryDate(savedTimeForEntry(entry!))}`;
@@ -80,7 +80,7 @@ export function EntryDialog({
         savedLine,
         savedLeg: savedLeg === "other" ? customDirection.trim() : savedLeg,
         nearestStopName: nearestStopName.trim()
-      })}>{busy ? "Saving…" : mode === "create" ? "Create entry" : "Save changes"}</button>
+      })}>{busy ? "Saving…" : mode === "create" ? "Save vehicle" : "Save changes"}</button>
     </>}>
       <div className="entry-form">
         <label className="field"><span>Vehicle number</span><input autoFocus name="vehicleNumber" inputMode="numeric" maxLength={4} value={vehicleNumber} placeholder="e.g. 881" onInput={(event) => setVehicleNumber(event.currentTarget.value.replace(/\D/g, "").slice(0, 4))} /></label>
@@ -155,10 +155,11 @@ export function SettingsDialog({ defaultLines, lineCatalog, busy, syncing, lastS
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const duplicate = new Set(draft).size !== draft.length;
   return <>
-    <Modal title="Default lines" subtitle={`${Object.keys(lineCatalog).length} lines available. Choose up to four quick-access lines.`} onClose={onClose} className="settings-modal" footer={<>
+    <Modal title="Settings" subtitle="Manage quick-access lines, sync, and account access." onClose={onClose} className="settings-modal" footer={<>
       <button className="button secondary" type="button" onClick={onClose}>Cancel</button>
       <button className="button primary" type="button" disabled={busy || duplicate} onClick={() => onSave(draft)}>{busy ? "Saving…" : "Save defaults"}</button>
     </>}>
+      <h3 className="settings-section-title">Default lines <span>{Object.keys(lineCatalog).length} available</span></h3>
       <SortableList
         values={draft}
         lockVertically

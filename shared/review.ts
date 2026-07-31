@@ -43,14 +43,19 @@ export function paginateReviewEntries(entries, page, pageSize = 25) {
 }
 
 export function vehicleFrequencyStats(entries) {
-  const counts = new Map();
+  const vehicles = new Map();
   for (const entry of entries) {
-    const vehicle = String(entry.vehicleNumber ?? "").trim();
-    if (vehicle) counts.set(vehicle, (counts.get(vehicle) ?? 0) + 1);
+    const vehicleNumber = String(entry.vehicleNumber ?? "").trim();
+    if (!vehicleNumber) continue;
+    const savedAt = String(entry.savedAt || entry.capturedAt || "");
+    const current = vehicles.get(vehicleNumber) ?? { vehicleNumber, count: 0, latest: "" };
+    current.count += 1;
+    if (savedAt > current.latest) current.latest = savedAt;
+    vehicles.set(vehicleNumber, current);
   }
-  const ranked = Array.from(counts, ([vehicleNumber, count]) => ({ vehicleNumber, count }))
-    .sort((a, b) => b.count - a.count || a.vehicleNumber.localeCompare(b.vehicleNumber, undefined, { numeric: true }));
-  const least = [...ranked].sort((a, b) => a.count - b.count || a.vehicleNumber.localeCompare(b.vehicleNumber, undefined, { numeric: true }))[0] ?? null;
+  const tieBreak = (a, b) => b.latest.localeCompare(a.latest) || a.vehicleNumber.localeCompare(b.vehicleNumber, undefined, { numeric: true });
+  const ranked = Array.from(vehicles.values()).sort((a, b) => b.count - a.count || tieBreak(a, b));
+  const least = [...ranked].sort((a, b) => a.count - b.count || tieBreak(a, b))[0] ?? null;
   return { most: ranked[0] ?? null, least };
 }
 

@@ -226,6 +226,11 @@ export function installPwaAssets() {
     manifest.href = "/manifest.webmanifest";
     document.head.appendChild(manifest);
 
+    const icon = document.createElement("link");
+    icon.rel = "icon";
+    icon.href = "/pwa/icon.svg";
+    document.head.appendChild(icon);
+
     const theme = document.createElement("meta");
     theme.name = "theme-color";
     theme.content = "#ffffff";

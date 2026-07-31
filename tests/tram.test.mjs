@@ -207,6 +207,21 @@ test("review pagination clamps pages and slices entries", async () => {
   assert.equal(paginateReviewEntries([], 99, 10).currentPage, 1);
 });
 
+test("vehicle frequency stats use recent saves to break ties", async () => {
+  const { vehicleFrequencyStats } = await loadReviewModule();
+  const stats = vehicleFrequencyStats([
+    { vehicleNumber: "1811", savedAt: "2026-06-17T08:00:00.000Z" },
+    { vehicleNumber: "1811", savedAt: "2026-06-17T09:00:00.000Z" },
+    { vehicleNumber: "1803", savedAt: "2026-06-17T10:00:00.000Z" },
+    { vehicleNumber: "1803", savedAt: "2026-06-17T11:00:00.000Z" },
+    { vehicleNumber: "2045", savedAt: "2026-06-17T12:00:00.000Z" },
+    { vehicleNumber: "1832", savedAt: "2026-06-17T13:00:00.000Z" }
+  ]);
+
+  assert.deepEqual(stats.most, { vehicleNumber: "1803", count: 2, latest: "2026-06-17T11:00:00.000Z" });
+  assert.deepEqual(stats.least, { vehicleNumber: "1832", count: 1, latest: "2026-06-17T13:00:00.000Z" });
+});
+
 test("route state maps hash routes to app pages", async () => {
   const { appPageFromHash, hashForAppPage } = await loadRouteStateModule();
 

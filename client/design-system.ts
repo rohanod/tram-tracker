@@ -224,5 +224,13 @@ export const DESIGN_SYSTEM_CSS = `
   --mut-radius-panel: var(--radius-2xl);
   --mut-radius-control: var(--control-radius-lg);
   --mut-radius-active: var(--control-radius-md);
+
+  --tracker-paper: #fbfaf8;
+  --tracker-ink: #0e0e0e;
+  --tracker-border: #d6d4c9;
+  --tracker-control-border: #d6d4cc;
+  --tracker-panel-border: #dbdad4;
+  --tracker-rule: #e4e2dd;
+  --tracker-row-hover: #f6f5f1;
 }
 `;

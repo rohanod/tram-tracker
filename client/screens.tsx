@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
-import { paginateReviewEntries, reviewTripEntries } from "../shared/review";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { paginateReviewEntries, reviewTripEntries, vehicleFrequencyStats } from "../shared/review";
 import { DateRangeControl, SelectControl, SORT_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from "./filter-controls";
 import { formatEntryDate, lineColor, lineForeground, savedTimeForEntry } from "./format";
 import { SearchIcon, SettingsIcon } from "./ui";
@@ -28,13 +28,25 @@ export function TrackerScreen({
 }) {
   const [page, setPage] = useState(1);
   const [compactHeight, setCompactHeight] = useState(() => typeof window !== "undefined" && window.innerHeight <= 700);
-  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 900);
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const resize = () => { setCompactHeight(window.innerHeight <= 700); setIsMobile(window.innerWidth < 768); };
+    const resize = () => { setCompactHeight(window.innerHeight <= 700); setIsMobile(window.innerWidth < 900); };
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
   const filtered = useMemo(() => reviewTripEntries(entries, filters), [entries, filters]);
+  const stats = useMemo(() => vehicleFrequencyStats(entries), [entries]);
   const desktopPage = useMemo(() => paginateReviewEntries(filtered, page, 25), [filtered, page]);
   const mobilePage = useMemo(() => paginateReviewEntries(filtered, page, compactHeight ? 3 : 4), [filtered, page, compactHeight]);
   useEffect(() => setPage(1), [filters.query, filters.line, filters.type, filters.dateFrom, filters.dateTo, filters.sort]);
@@ -50,30 +62,30 @@ export function TrackerScreen({
           <div className="brand-block">
             <strong>Vehicle Tracker</strong>
             <div className="status-line" aria-live="polite">
-              <span className={`status-dot ${isOnline ? "online" : ""}`} />
-              <span>{isOnline ? "Online" : "Offline"}</span>
-              <span>·</span>
-              <span>{pendingCount ? `${pendingCount} pending` : lastSyncLabel}</span>
+              <span>{isOnline ? "Online" : "Offline"}</span><span>·</span><span>{pendingCount ? `${pendingCount} pending` : lastSyncLabel}</span>
             </div>
           </div>
           <div className="header-actions">
-            <button className="icon-button settings-button" type="button" aria-label="Settings" onClick={onOpenSettings}><SettingsIcon /></button>
+            <button className="button secondary settings-button" type="button" aria-label="Settings" onClick={onOpenSettings}><SettingsIcon /><span>Settings</span></button>
             <button className="button primary save-new" type="button" onClick={onNew}>Save new</button>
           </div>
         </header>
 
         <section className="search-section">
-          <div className="search-copy"><h1>Search vehicles</h1><p>Live results. Save only when needed.</p></div>
+          <div className="search-copy"><h1><span className="desktop-title">Search vehicles</span><span className="mobile-title">Search</span></h1><p>Results update as you type.</p></div>
           <div className="search-and-stats">
-            <label className="search-field"><SearchIcon /><span className="sr-only">Search vehicles</span><input name="vehicle-search" value={filters.query} placeholder="Vehicle, line, direction, stop…" onInput={(event) => onChangeFilters({ ...filters, query: event.currentTarget.value })} /></label>
+            <label className="search-field"><SearchIcon /><span className="sr-only">Search vehicles</span><input ref={searchRef} name="vehicle-search" value={filters.query} placeholder="Vehicle, line, direction, place…" onInput={(event) => onChangeFilters({ ...filters, query: event.currentTarget.value })} /><kbd aria-hidden="true">/</kbd></label>
+            <StatTile label="Most common" stat={stats.most} />
+            <StatTile label="Least common" stat={stats.least} />
           </div>
           <div className="filter-row desktop-filters">
             <FilterControls filters={filters} lineCatalog={lineCatalog} onChange={onChangeFilters} />
+            <span className="result-count">{filtered.length} {filtered.length === 1 ? "entry" : "entries"}</span>
           </div>
           <div className="filter-row mobile-filters">
-            <button className="button secondary" type="button" onClick={onOpenFilters}>Filters</button>
+            <button className="button secondary filter-trigger" type="button" onClick={onOpenFilters}>Filters <ChevronDown /></button>
             <SelectControl compact label="Sort" value={filters.sort} options={SORT_FILTER_OPTIONS} onChange={(sort) => onChangeFilters({ ...filters, sort })} />
-            <span className="result-count">{filtered.length} results</span>
+            <span className="result-count">{rangeText(mobilePage)}</span>
           </div>
         </section>
 
@@ -85,8 +97,8 @@ export function TrackerScreen({
             !filtered.length ? <SystemState title={entries.length ? "No matching vehicles" : "No saved vehicles"} body={entries.length ? "Try a different search or filter." : "Use Save new to add the first entry."} /> : (
               <>
                 <div className="table-wrap">
-                  <div className="table-heading"><h2>Saved vehicles</h2><span>{rangeText(desktopPage)}</span></div>
-                  <table className="vehicle-table"><thead><tr><th>Vehicle</th><th>Line</th><th>Direction</th><th>Stop saved</th><th>Date saved</th><th><span className="sr-only">Open</span></th></tr></thead><tbody>{desktopPage.entries.map((entry) => <DesktopRow entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} onOpen={onOpen} />)}</tbody></table>
+                  <div className="table-heading"><h2>Recent vehicles</h2><span>{rangeText(desktopPage)}</span></div>
+                  <table className="vehicle-table"><thead><tr><th>Vehicle</th><th>Line</th><th>Direction</th><th>Stop saved</th><th>Date saved</th><th>Action</th></tr></thead><tbody>{desktopPage.entries.map((entry) => <DesktopRow entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} onOpen={onOpen} />)}</tbody></table>
                 </div>
                 <div className="mobile-card-list">{mobilePage.entries.map((entry) => <MobileCard entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} onOpen={onOpen} />)}</div>
                 <div className="desktop-pagination"><Pagination page={desktopPage.currentPage} totalPages={desktopPage.totalPages} onPage={setPage} /></div>
@@ -101,7 +113,7 @@ export function TrackerScreen({
 
 export function FilterControls({ filters, lineCatalog, onChange }: { filters: ReviewFilters; lineCatalog: Record<string, LineInfo>; onChange: (filters: ReviewFilters) => void }) {
   const lineOptions = [
-    { value: "all", label: "Any line" },
+    { value: "all", label: "Any" },
     ...Object.keys(lineCatalog).sort(compareLines).map((line) => ({
       value: line,
       label: lineOptionLabel(line, lineCatalog),
@@ -116,8 +128,12 @@ export function FilterControls({ filters, lineCatalog, onChange }: { filters: Re
   </>;
 }
 
+function StatTile({ label, stat }: { label: string; stat: { vehicleNumber: string; count: number } | null }) {
+  return <div className="stat-tile"><span>{label}</span><div><strong>{stat?.vehicleNumber || "—"}</strong><small>{stat ? `${stat.count} ${stat.count === 1 ? "save" : "saves"}` : "No saves"}</small></div></div>;
+}
+
 function DesktopRow({ entry, lineCatalog, onOpen }: { entry: LocalEntry; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
-  return <tr onDblClick={() => onOpen(entry)}><td><strong>{entry.vehicleNumber}</strong></td><td><LinePill line={entry.savedLine} catalog={lineCatalog} /></td><td>{entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg}</td><td className="muted-cell">{entry.nearestStopName || "—"}</td><td className="muted-cell">{formatEntryDate(savedTimeForEntry(entry))}</td><td><button className="button secondary compact" type="button" onClick={() => onOpen(entry)}>Open</button></td></tr>;
+  return <tr onDblClick={() => onOpen(entry)}><td><strong>{entry.vehicleNumber}</strong></td><td><LinePill line={entry.savedLine} catalog={lineCatalog} /></td><td>{entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg}</td><td className="muted-cell">{entry.nearestStopName || "—"}</td><td className="muted-cell">{formatEntryDate(savedTimeForEntry(entry))}</td><td><button className="open-entry" type="button" onClick={() => onOpen(entry)}>Open</button></td></tr>;
 }
 
 function MobileCard({ entry, lineCatalog, onOpen }: { entry: LocalEntry; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
@@ -134,7 +150,7 @@ export function LinePill({ line, catalog }: { line: string; catalog: Record<stri
 
 function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (page: number) => void }) {
   const pages = pageNumbers(page, totalPages);
-  return <nav className="pagination" aria-label="Pagination"><button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>Prev</button>{pages.map((item, index) => item === "…" ? <span key={`gap-${index}`}>…</span> : <button className={item === page ? "active" : ""} aria-current={item === page ? "page" : undefined} type="button" onClick={() => onPage(Number(item))}>{item}</button>)}<button type="button" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>Next</button></nav>;
+  return <nav className="pagination" aria-label="Pagination"><button className="page-wide" type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>Prev</button>{pages.map((item, index) => item === "…" ? <span key={`gap-${index}`}>…</span> : <button className={item === page ? "active" : ""} aria-current={item === page ? "page" : undefined} type="button" onClick={() => onPage(Number(item))}>{item}</button>)}<button className="page-wide" type="button" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>Next</button></nav>;
 }
 
 function SystemState({ title, body, action, onAction }: { title: string; body: string; action?: string; onAction?: () => void }) {
@@ -142,6 +158,7 @@ function SystemState({ title, body, action, onAction }: { title: string; body: s
 }
 
 function LoadingRows() { return <div className="loading-rows" aria-label="Loading vehicles">{[0,1,2,3].map((item) => <span key={item} />)}</div>; }
+function ChevronDown() { return <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 10 5 5 5-5" /></svg>; }
 function rangeText(page) { if (!page.totalEntries) return "0"; const start = (page.currentPage - 1) * page.pageSize + 1; return `${start}–${Math.min(start + page.entries.length - 1, page.totalEntries)} of ${page.totalEntries}`; }
 function compareLines(a: string, b: string) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }); }
 function lineOptionLabel(line: string, catalog: Record<string, LineInfo>) { const type = String(catalog[line]?.type || "Transit").toLowerCase(); return type.includes("tram") ? "Tram" : type.includes("bus") ? "Bus" : "Transit"; }
