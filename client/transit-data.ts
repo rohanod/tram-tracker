@@ -1,7 +1,7 @@
 import { setTransitData } from "../shared/corridors";
 import { setDirectionOptions } from "../shared/tram";
-import localGeometry from "../storage-data/transit-geometry.json";
-import localMetadata from "../storage-data/transit-metadata.json";
+import localGeometry from "../storage-data/tpg-routes.polyline.json";
+import localMetadata from "../storage-data/tpg-lines.info.json";
 import { debugSync, errorMessage, readMeta, writeMeta } from "./local-store";
 import type { LineInfo, TransitDataConfig } from "./types";
 

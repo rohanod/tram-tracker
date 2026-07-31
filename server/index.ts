@@ -11,12 +11,12 @@ import {
   nearestTransitStops,
   roundCoordinate,
   transitStopsFromMetadata,
-  vehicleHistoryMessage
+  vehicleHistoryMessage,
+  vehicleLookupHistory
 } from "../shared/tram";
 
 const APP_NAME = "tram-tracker";
 const DEFAULT_LINES = ["14", "18", "12", "17"];
-let shortcutStopCache = { version: "", metadataUrl: "", stops: [] };
 
 export default capsule({
   name: APP_NAME,
@@ -205,9 +205,13 @@ export default capsule({
       const viewer = viewerFor(ctx);
       if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
       const next = normalizeTransitDataInput(input);
-      if (!next) return { ok: false, reason: "invalid_transit_data" };
+      const stopIndexPayload = normalizeTransitStopIndexPayload(input?.stopsPayload);
+      if (!next || !stopIndexPayload) return { ok: false, reason: "invalid_transit_data" };
       const ownerId = primaryOwnerIdFor(ctx, viewer);
       const existing = await ctx.db.transitData
+        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+        .first();
+      const existingStopIndex = await ctx.db.transitStopIndexes
         .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
         .first();
       const previous = existing ? transitDataResponse(existing) : null;
@@ -215,6 +219,12 @@ export default capsule({
         await ctx.db.transitData.update(existing.id, { ownerId, ...next });
       } else {
         await ctx.db.transitData.insert({ ownerId, ...next });
+      }
+      const stopIndex = { ownerId, version: next.version, payload: stopIndexPayload };
+      if (existingStopIndex) {
+        await ctx.db.transitStopIndexes.update(existingStopIndex.id, stopIndex);
+      } else {
+        await ctx.db.transitStopIndexes.insert(stopIndex);
       }
       return { ok: true, previous, current: next };
     })
@@ -450,6 +460,37 @@ function normalizeTransitDataInput(input) {
   return { version, metadataKey, metadataUrl, metadataSize, geometryKey, geometryUrl, geometrySize };
 }
 
+function normalizeTransitStopIndexPayload(value) {
+  const payload = String(value ?? "");
+  if (!payload || payload.length > 500_000) return "";
+  try {
+    const parsed = JSON.parse(payload);
+    if (parsed?.v !== 1 || !Array.isArray(parsed?.s) || !parsed.s.length) return "";
+    const ids = new Set();
+    for (const stop of parsed.s) {
+      const id = String(stop?.[0] ?? "").trim();
+      const name = String(stop?.[2] ?? "").trim();
+      const lat = Number(stop?.[3]);
+      const lon = Number(stop?.[4]);
+      if (
+        !id ||
+        !name ||
+        ids.has(id) ||
+        !Number.isFinite(lat) ||
+        lat < -90 ||
+        lat > 90 ||
+        !Number.isFinite(lon) ||
+        lon < -180 ||
+        lon > 180
+      ) return "";
+      ids.add(id);
+    }
+    return payload;
+  } catch {
+    return "";
+  }
+}
+
 function cleanStorageKey(value) {
   const key = cleanBounded(value, 160);
   return /^public\/[A-Za-z0-9_-]+$/.test(key) ? key : "";
@@ -613,43 +654,18 @@ async function nearestShortcutStops(ctx, req) {
     return json({ ok: false, reason: "allowed_user_id_missing", stops: [] }, jsonOptions(503));
   }
 
-  const transitData = await firstForOwners(ctx.db.transitData, [ownerId]);
-  if (!transitData?.metadataUrl) {
+  const stopIndex = await firstForOwners(ctx.db.transitStopIndexes, [ownerId]);
+  if (!stopIndex?.payload) {
     return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
   }
 
   try {
-    const stops = await shortcutTransitStops(transitData);
+    const stops = transitStopsFromMetadata(JSON.parse(stopIndex.payload));
     const nearest = nearestTransitStops(location, stops, 5).map((stop) => stop.name);
     return json({ ok: true, stops: [...nearest, "Other"], dataAvailable: Boolean(nearest.length) }, jsonOptions(200));
   } catch {
     return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
   }
-}
-
-async function shortcutTransitStops(transitData) {
-  const version = String(transitData.version ?? "");
-  const metadataUrl = String(transitData.metadataUrl ?? "");
-  if (
-    shortcutStopCache.version === version &&
-    shortcutStopCache.metadataUrl === metadataUrl &&
-    shortcutStopCache.stops.length
-  ) {
-    return shortcutStopCache.stops;
-  }
-
-  const response = await fetch(metadataUrl, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    throw new Error("transit_metadata_unavailable");
-  }
-
-  const stops = transitStopsFromMetadata(await response.json());
-  if (!stops.length) {
-    throw new Error("transit_stops_missing");
-  }
-
-  shortcutStopCache = { version, metadataUrl, stops };
-  return stops;
 }
 
 function shortcutAuthorization(ctx, req) {

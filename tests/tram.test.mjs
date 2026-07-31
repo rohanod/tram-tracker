@@ -135,25 +135,33 @@ test("nearest transit stops support compact and raw metadata without duplicate n
       }]
     }]
   });
+  const stopIndex = transitStopsFromMetadata({
+    v: 1,
+    s: [
+      ["ch:1:sloid:1", "8510001", "Genève, Indexed", 46.202, 6.142],
+      ["broken"]
+    ]
+  });
 
   assert.deepEqual(compactStops.map((stop) => stop.name), ["Genève, Near", "Genève, Near", "Genève, Far"]);
   assert.deepEqual(rawStops.map((stop) => stop.name), ["Genève, Raw"]);
+  assert.deepEqual(stopIndex.map((stop) => stop.name), ["Genève, Indexed"]);
   assert.deepEqual(
     nearestTransitStops({ lat: 46.2, lon: 6.14 }, compactStops, 5).map((stop) => stop.name),
     ["Genève, Near", "Genève, Far"]
   );
 });
 
-test("generated transit metadata contains the full mixed-mode catalog", async () => {
-  const metadata = JSON.parse(await readFile(new URL("../storage-data/transit-metadata.json", import.meta.url), "utf8"));
-  const types = new Set(metadata.lines.map((line) => line.t));
+test("local TPG line data contains the full mixed-mode catalog", async () => {
+  const metadata = JSON.parse(await readFile(new URL("../storage-data/tpg-lines.info.json", import.meta.url), "utf8"));
+  const types = new Set(metadata.lines.map((line) => line.vehicle));
   assert.equal(metadata.lines.length, 78);
-  assert.equal(metadata.lines.reduce((count, line) => count + line.d.length, 0), 156);
+  assert.equal(metadata.lines.reduce((count, line) => count + line.directions.length, 0), 156);
   assert.ok(types.has("BUS"));
   assert.ok(types.has("TRAM"));
   assert.ok(types.has("TROLLEY"));
-  assert.ok(metadata.lines.some((line) => line.l === "A"));
-  assert.ok(metadata.lines.every((line) => /^#[0-9A-F]{6}$/i.test(line.c) && line.d.length));
+  assert.ok(metadata.lines.some((line) => line.number === "A"));
+  assert.ok(metadata.lines.every((line) => /^#[0-9A-F]{6}$/i.test(line.colour) && line.directions.length));
 });
 
 test("server not_found means a pending delete is already settled", async () => {

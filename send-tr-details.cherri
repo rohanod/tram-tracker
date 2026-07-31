@@ -7,7 +7,9 @@
 #define color orange
 #define glyph tram
 
-const shortcutToken = prompt("API token")
+#question apiToken "What is the Vehicle Tracker API token?" ""
+
+const shortcutToken = text(apiToken)
 
 action 'ask' promptWholeNumber(text prompt: 'WFAskActionPrompt'): number {
     "WFInputType": "Number",

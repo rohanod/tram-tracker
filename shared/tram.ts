@@ -248,6 +248,15 @@ export function classifyCapture(location, _capturedAt, includeNearestStop = true
 }
 
 export function transitStopsFromMetadata(metadata) {
+  if (metadata?.v === 1 && Array.isArray(metadata?.s)) {
+    return metadata.s.flatMap((stop) => {
+      const name = String(stop?.[2] ?? "").trim();
+      const lat = Number(stop?.[3]);
+      const lon = Number(stop?.[4]);
+      return name && Number.isFinite(lat) && Number.isFinite(lon) ? [{ name, lat, lon }] : [];
+    });
+  }
+
   if (Array.isArray(metadata?.stops)) {
     return metadata.stops.flatMap((stop) => {
       const name = String(stop?.n ?? stop?.name ?? "").trim();
