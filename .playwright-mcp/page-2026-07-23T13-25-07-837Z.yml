@@ -1,0 +1,40 @@
+- generic [ref=f3e1]:
+  - generic [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - generic [ref=f3e6]:
+        - generic [ref=f3e7]: Loading
+        - progressbar [ref=f3e8]
+      - main [ref=f3e15]:
+        - generic [ref=f3e16]:
+          - generic [ref=f3e17]: Sign in with Google
+          - generic [ref=f3e27]:
+            - heading "Sign in" [level=1] [ref=f3e28]
+            - generic [ref=f3e30]:
+              - text: to continue to
+              - button "lakebed.dev" [ref=f3e31] [cursor=pointer]
+        - generic [ref=f3e39]:
+          - generic [ref=f3e44]:
+            - textbox "Email or phone" [active] [ref=f3e45]
+            - generic: Email or phone
+          - button "Forgot email?" [ref=f3e49] [cursor=pointer]
+        - generic [ref=f3e51]:
+          - button "Next" [ref=f3e55]
+          - button "Create account" [ref=f3e63]
+    - contentinfo [ref=f3e70]:
+      - combobox "Change language English (United States)" [ref=f3e74] [cursor=pointer]:
+        - generic: English (United States)
+      - list [ref=f3e76]:
+        - listitem [ref=f3e77]:
+          - link "Open Google Account Help Center (external, opens in a new window)" [ref=f3e78] [cursor=pointer]:
+            - /url: https://support.google.com/accounts?hl=en-US&p=account_iph
+            - text: Help
+        - listitem [ref=f3e79]:
+          - link "Privacy Policy (external, opens in a new window)" [ref=f3e80] [cursor=pointer]:
+            - /url: https://accounts.google.com/TOS?loc=CH&hl=en-US&privacy=true
+            - text: Privacy
+        - listitem [ref=f3e81]:
+          - link "Google Terms of Service (external, opens in a new window)" [ref=f3e82] [cursor=pointer]:
+            - /url: https://accounts.google.com/TOS?loc=CH&hl=en-US
+            - text: Terms
+  - iframe [ref=f3e83]:
+    

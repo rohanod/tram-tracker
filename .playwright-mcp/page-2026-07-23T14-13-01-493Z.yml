@@ -1,0 +1,6 @@
+- main [ref=e4]:
+  - generic [ref=e5]:
+    - paragraph [ref=e6]: Vehicle Tracker
+    - heading "Allowlist missing" [level=1] [ref=e7]
+    - paragraph [ref=e8]: Set ALLOWED_EMAIL, then redeploy.
+    - button "Sign out" [ref=e9] [cursor=pointer]

@@ -1,0 +1,25 @@
+- generic [ref=f2e2]:
+  - banner [ref=f2e3]:
+    - link "lakebed auth" [ref=f2e4] [cursor=pointer]:
+      - /url: /
+      - generic [ref=f2e6]: lakebed
+      - generic [ref=f2e7]: auth
+  - main [ref=f2e8]:
+    - generic [ref=f2e9]:
+      - heading "Continue with Lakebed" [level=1] [ref=f2e10]
+      - paragraph [ref=f2e11]: Sign in once. Lakebed Auth handles future app handshakes automatically.
+      - generic [ref=f2e12]:
+        - link "Continue with Google" [ref=f2e13] [cursor=pointer]:
+          - /url: https://auth.lakebed.dev/auth/google?ticket=xY-r32-1psCgYfTUgK_VOHkDKBJ0i0t9
+        - link "Cancel" [ref=f2e14] [cursor=pointer]:
+          - /url: /
+      - paragraph [ref=f2e15]:
+        - text: Ticket
+        - code [ref=f2e16]: xY-r32-1psCgYfTUgK_VOHkDKBJ0i0t9
+  - contentinfo [ref=f2e17]:
+    - generic [ref=f2e18]: Identity infrastructure for Lakebed apps
+    - generic [ref=f2e19]:
+      - link "Privacy" [ref=f2e20] [cursor=pointer]:
+        - /url: /privacy
+      - link "Terms" [ref=f2e21] [cursor=pointer]:
+        - /url: /terms

@@ -1,0 +1,37 @@
+- main [ref=e66]:
+  - generic [ref=e67]:
+    - generic [ref=e68]:
+      - generic [ref=e69]:
+        - strong [ref=e70]: Vehicle Tracker
+        - generic [ref=e71]:
+          - generic [ref=e73]: Online
+          - generic [ref=e74]: ·
+          - generic [ref=e75]: Not synced yet
+          - button "Sign out" [ref=e76] [cursor=pointer]
+      - generic [ref=e77]:
+        - button "Settings" [ref=e78] [cursor=pointer]
+        - button "Save new" [ref=e82] [cursor=pointer]
+    - generic [ref=e83]:
+      - generic [ref=e84]:
+        - heading "Search vehicles" [level=1] [ref=e85]
+        - paragraph [ref=e86]: Live results. Save only when needed.
+      - generic [ref=e88]:
+        - generic [ref=e92]: Search vehicles
+        - textbox "Search vehicles" [ref=e93]:
+          - /placeholder: Vehicle, line, direction, stop…
+      - generic [ref=e94]:
+        - button "Line Any line" [ref=e96] [cursor=pointer]:
+          - generic [ref=e97]: Line
+          - generic [ref=e98]: Any line
+        - button "Date range Any date" [ref=e103] [cursor=pointer]:
+          - generic [ref=e104]: Date range
+          - generic [ref=e105]: Any date
+        - button "Status Any status" [ref=e111] [cursor=pointer]:
+          - generic [ref=e112]: Status
+          - generic [ref=e113]: Any status
+        - button "Sort Newest" [ref=e118] [cursor=pointer]:
+          - generic [ref=e119]: Sort
+          - generic [ref=e120]: Newest
+    - generic [ref=e125]:
+      - heading "No saved vehicles" [level=2] [ref=e126]
+      - paragraph [ref=e127]: Use Save new to add the first entry.
