@@ -300,8 +300,8 @@ button:disabled { cursor: default; opacity: .42; }
 @keyframes sheet-in { from { transform: translateY(14px); opacity: .7; } }
 
 /* Vehicle Tracker · Figma functional specification */
-.tracker-page { padding: 0; background: var(--tracker-paper); }
-.tracker-shell { width: min(100%, 1440px); height: 100dvh; min-height: 640px; padding: 24px 44px 20px; border-color: var(--tracker-border); border-radius: 20px; }
+.tracker-page { padding: 0; background: var(--color-surface); }
+.tracker-shell { width: 100%; height: 100dvh; min-height: 640px; margin: 0; padding: 24px 44px 20px; border: 0; border-radius: 0; }
 .tracker-shell > * { min-width: 0; }
 .app-header { min-height: 50px; align-items: center; }
 .brand-block strong { font-size: 20px; line-height: 1.15; }
@@ -315,7 +315,7 @@ button:disabled { cursor: default; opacity: .42; }
 .search-copy p { margin-top: 3px; font-size: 13px; }
 .mobile-title { display: none; }
 .search-and-stats { margin-top: 10px; display: grid; grid-template-columns: minmax(360px, 1fr) 144px 144px; gap: 12px; }
-.search-field { height: 48px; padding: 0 12px; border-color: var(--tracker-ink); border-radius: 12px; }
+.search-field { height: 48px; padding: 0 12px; border: 1px solid var(--tracker-border); border-radius: 12px; }
 .search-field svg { width: 18px; height: 18px; }
 .search-field kbd { width: 26px; height: 26px; border: 1px solid var(--tracker-border); border-radius: 7px; display: grid; place-items: center; color: var(--color-text-secondary); background: var(--tracker-paper); font: 500 12px/1 var(--font-sans); }
 .stat-tile { min-width: 0; height: 48px; padding: 6px 10px; border: 1px solid var(--tracker-border); border-radius: 10px; background: var(--tracker-paper); display: flex; flex-direction: column; justify-content: center; }
@@ -368,7 +368,7 @@ button:disabled { cursor: default; opacity: .42; }
 
 @media (max-width: 899px) {
   .tracker-page { padding: 0; background: var(--color-surface); }
-  .tracker-shell { width: 100%; height: auto; min-height: 100dvh; padding: 20px max(20px, env(safe-area-inset-left)) calc(14px + env(safe-area-inset-bottom)); border-radius: 36px; }
+  .tracker-shell { width: 100%; height: auto; min-height: 100dvh; padding: 20px max(20px, env(safe-area-inset-left)) calc(14px + env(safe-area-inset-bottom)); border-radius: 0; }
   .app-header { position: sticky; top: 0; z-index: var(--z-sticky); width: auto; min-width: 0; min-height: 50px; margin: -20px -20px 0; padding: calc(20px + env(safe-area-inset-top)) 20px 10px; gap: 8px; background: color-mix(in srgb, var(--color-surface) 95%, transparent); backdrop-filter: blur(10px); }
   .brand-block { min-width: 0; }
   .brand-block strong { font-size: 20px; }
@@ -421,7 +421,7 @@ button:disabled { cursor: default; opacity: .42; }
 }
 
 @media (max-width: 360px) {
-  .tracker-shell { padding-left: 14px; padding-right: 14px; border-radius: 28px; }
+  .tracker-shell { padding-left: 14px; padding-right: 14px; border-radius: 0; }
   .app-header { margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; }
   .brand-block strong { font-size: 16px; white-space: nowrap; }
   .status-line { font-size: 10px; }
