@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,17 +15,32 @@ let stopped = false;
 console.log("Mirroring Lakebed capsule without .git into " + devRoot);
 await mirrorSources({ reset: true });
 lastFingerprint = await sourceFingerprint();
-console.log("Mirror ready. In another terminal run:");
-console.log("npx lakebed dev .lakebed/dev-capsule --port 3000");
 
 const interval = setInterval(() => {
   void checkForChanges();
 }, 500);
+const lakebed = spawn("npx", ["lakebed", "dev", devRoot, "--port", "3000"], {
+  cwd: root,
+  stdio: "inherit"
+});
+
+lakebed.on("exit", (code, signal) => {
+  stopped = true;
+  clearInterval(interval);
+  if (!signal) process.exitCode = code ?? 1;
+});
+lakebed.on("error", (error) => {
+  stopped = true;
+  clearInterval(interval);
+  console.error(error);
+  process.exitCode = 1;
+});
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     stopped = true;
     clearInterval(interval);
+    lakebed.kill(signal);
   });
 }
 
