@@ -10,16 +10,10 @@ Create a server-only env file:
 printf 'ALLOWED_EMAIL=you@example.com\n' > .env.lakebed.server
 ```
 
-Then run the mirror watcher in one terminal:
+Then start Lakebed through the clean development mirror:
 
 ```sh
-node scripts/dev.mjs
-```
-
-And run Lakebed against that mirror in another terminal:
-
-```sh
-npx lakebed dev .lakebed/dev-capsule --port 3000
+npm run dev
 ```
 
 The app requires Google sign-in and only allows the email configured in `ALLOWED_EMAIL`.
@@ -27,6 +21,14 @@ The app requires Google sign-in and only allows the email configured in `ALLOWED
 The mirror watcher copies only `client/`, `server/`, `shared/`, `storage-data/`, `lakebed.json`, and `.env.lakebed.server` into `.lakebed/dev-capsule`. This avoids Lakebed dev rebuilding when `.git` metadata changes in the project root.
 
 The dev mirror also disables PWA static endpoints and service-worker registration locally. The root capsule still serves the manifest/service worker/icon on deploy; this local-only transform avoids a Lakebed dev crash after static endpoint requests.
+
+## Deploy
+
+```sh
+npm run deploy
+```
+
+The deploy wrapper stages only `client/`, `server/`, `shared/`, `lakebed.json`, `.env.lakebed.server`, and compact storage placeholders. Do not run `npx lakebed deploy` from the repository root: Git metadata and local audit files can exceed Lakebed's deployment request limit.
 
 ## What v1 does
 
@@ -41,7 +43,7 @@ Stats and unique vehicle summaries are intentionally out of scope for v1.
 
 ## Inspect local state
 
-While `npx lakebed dev` is running:
+While `npm run dev` is running:
 
 ```sh
 npx lakebed db list --port 3000
