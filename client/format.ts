@@ -238,6 +238,8 @@ export function installPwaAssets() {
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    navigator.serviceWorker.register("/sw.js")
+      .then((registration) => registration.update())
+      .catch((error) => console.warn("Service worker update failed", error));
   }
 }

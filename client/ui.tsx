@@ -27,7 +27,7 @@ export function AuthGate({ authLoading, viewer, isOnline, priorAuthorized }: { a
         <p className="eyebrow">Vehicle Tracker</p>
         <h1>{title}</h1>
         <p>{body}</p>
-        {!authLoading && isOnline ? <SignInWithGoogle className="button primary" /> : null}
+        {!authLoading && isOnline && viewer?.isGuest ? <SignInWithGoogle className="button primary" /> : null}
         {viewer && !viewer.isGuest ? <button className="button secondary" type="button" onClick={() => signOut()}>Sign out</button> : null}
       </section>
     </main>
@@ -41,11 +41,11 @@ export function Modal({ title, subtitle, onClose, children, footer, className = 
   useEffect(() => {
     returnFocus.current = document.activeElement as HTMLElement;
     const dialog = dialogRef.current;
-    dialog?.querySelector<HTMLElement>("button, input, select")?.focus();
+    dialog?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
       if (event.key !== "Tab" || !dialog) return;
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];

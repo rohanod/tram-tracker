@@ -65,8 +65,8 @@ export function SelectControl({ label, value, onChange, options, compact = false
   }, [open]);
 
   return <div className="select-control-wrap" ref={rootRef}>
-    <button className={`filter-control select-control ${compact ? "compact-filter" : ""} ${open ? "open" : ""}`} type="button" aria-label={compact ? label : undefined} aria-haspopup="listbox" aria-expanded={open} onClick={toggle}>
-      <span className={compact ? "sr-only" : "control-label"}>{label}</span>
+    <button className={`filter-control select-control ${compact ? "compact-filter" : ""} ${open ? "open" : ""}`} type="button" aria-haspopup="listbox" aria-expanded={open} onClick={toggle}>
+      {compact ? null : <span className="control-label">{label}</span>}
       <span className="control-value">{selected?.badge ? <OptionBadge {...selected.badge} /> : <span>{compact ? `${label}: ${selected?.label}` : selected?.label}</span>}<ChevronIcon /></span>
     </button>
     {open ? <div className="select-menu" role="listbox" aria-label={label} style={position}>{options.map((option) => <button className="select-option" key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }}>{option.badge ? <OptionBadge {...option.badge} /> : null}<span>{option.label}</span></button>)}</div> : null}

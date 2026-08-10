@@ -1,1 +1,1 @@
-export { localEntryFromServerEntry, mergeServerEntries, refreshLocalState, syncPendingEntries } from "./local-store";
+export { localEntryFromServerEntry, mergeServerEntries, mergeServerVehicleNotes, refreshLocalState, syncPendingEntries } from "./local-store";

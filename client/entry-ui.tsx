@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { classifyCapture, directionOptionsForLine, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, OBSERVATION_LABELS, OBSERVATION_VALUES } from "../shared/tram";
+import { classifyCapture, directionOptionsForLine, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, normalizeVehicleNote, OBSERVATION_LABELS, OBSERVATION_VALUES, VEHICLE_NOTE_MAX_LENGTH } from "../shared/tram";
 import { entryPoint, formatEntryDate, lineColor, lineForeground, savedTimeForEntry } from "./format";
 import { DateRangeControl, SelectControl, SORT_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from "./filter-controls";
 import { MapCnReviewMap } from "./map-ui";
@@ -101,14 +101,40 @@ export function EntryDialog({
   </>;
 }
 
-export function EntryDetailsDialog({ entry, lineCatalog, onClose, onEdit, onDelete }: {
+export function EntryDetailsDialog({ entry, vehicleNote, lineCatalog, onClose, onEdit, onDelete, onSaveVehicleNote }: {
   entry: LocalEntry;
+  vehicleNote: string;
   lineCatalog: Record<string, LineInfo>;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onSaveVehicleNote: (note: string) => Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(vehicleNote);
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const normalizedDraft = normalizeVehicleNote(noteDraft);
+  const noteChanged = normalizedDraft !== normalizeVehicleNote(vehicleNote);
+
+  useEffect(() => {
+    setNoteDraft(vehicleNote);
+    setNoteError("");
+  }, [entry.vehicleNumber, vehicleNote]);
+
+  async function saveNote() {
+    setNoteSaving(true);
+    setNoteError("");
+    try {
+      await onSaveVehicleNote(normalizedDraft);
+      setNoteDraft(normalizedDraft);
+    } catch (error) {
+      setNoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNoteSaving(false);
+    }
+  }
+
   return <>
     <Modal title="Saved entry details" subtitle={`Vehicle ${entry.vehicleNumber} · Saved ${formatEntryDate(savedTimeForEntry(entry))}`} onClose={onClose} className="details-modal" footer={<>
       <button className="button secondary" type="button" onClick={onEdit}>Edit</button>
@@ -121,6 +147,15 @@ export function EntryDetailsDialog({ entry, lineCatalog, onClose, onEdit, onDele
         <Detail label="Direction" value={entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg} />
         <Detail label="Stop saved" value={entry.nearestStopName || "No saved stop"} />
       </dl>
+      <section className="vehicle-note-editor" aria-labelledby="vehicle-note-label">
+        <label className="field" htmlFor="vehicle-note"><span id="vehicle-note-label">Vehicle note</span></label>
+        <textarea id="vehicle-note" name="vehicleNote" maxLength={VEHICLE_NOTE_MAX_LENGTH} value={noteDraft} placeholder="Add a lasting note about this vehicle…" onInput={(event) => { setNoteDraft(event.currentTarget.value); setNoteError(""); }} />
+        <div className="vehicle-note-actions">
+          <small>Shared by every saved entry for vehicle {entry.vehicleNumber}.</small>
+          <button className="button secondary compact" type="button" disabled={!noteChanged || noteSaving} onClick={() => void saveNote()}>{noteSaving ? "Saving…" : !normalizedDraft && vehicleNote ? "Remove note" : "Save note"}</button>
+        </div>
+        <p className={`vehicle-note-message ${noteError ? "error" : ""}`} role={noteError ? "alert" : undefined}>{noteError}</p>
+      </section>
     </Modal>
     {confirming ? <ConfirmDeleteDialog vehicleNumber={entry.vehicleNumber} onCancel={() => setConfirming(false)} onConfirm={onDelete} /> : null}
   </>;

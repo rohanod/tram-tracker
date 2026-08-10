@@ -53,6 +53,20 @@ export type LocalEntry = {
   updatedAt: string;
 };
 
+export type ServerVehicleNote = {
+  id: string;
+  vehicleNumber: string;
+  note: string;
+  updatedAt: string;
+};
+
+export type LocalVehicleNote = {
+  vehicleNumber: string;
+  note: string;
+  syncStatus: "pending" | "synced" | "failed";
+  lastError: string;
+  updatedAt: string;
+};
 
 export type MutationResult = {
   ok: boolean;
@@ -128,6 +142,7 @@ export type TransitDataConfig = {
   geometryKey: string;
   geometryUrl: string;
   geometrySize: number;
+  cleanupKeys: string[];
 };
 
 export type AccessCache = {
@@ -137,17 +152,27 @@ export type AccessCache = {
   expiresAt: number;
 };
 
-export type SyncOperation = {
+type SyncOperationBase = {
   opKey: string;
-  type: "upsert" | "delete";
-  clientEntryId: string;
-  serverId: string;
   createdAt: string;
   updatedAt: string;
   nextAttemptAt: string;
   attempts: number;
   lastError: string;
 };
+
+export type EntrySyncOperation = SyncOperationBase & {
+  type: "upsert" | "delete";
+  clientEntryId: string;
+  serverId: string;
+};
+
+export type VehicleNoteSyncOperation = SyncOperationBase & {
+  type: "vehicle_note";
+  vehicleNumber: string;
+};
+
+export type SyncOperation = EntrySyncOperation | VehicleNoteSyncOperation;
 
 declare global {
   interface Window {

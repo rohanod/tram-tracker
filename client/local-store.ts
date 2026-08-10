@@ -1,10 +1,11 @@
 import { isDeleteSettledResult } from "../shared/sync";
-import { normalizeDirection, normalizeLine, normalizeObservationType } from "../shared/tram";
-import type { AccessCache, LocalEntry, MutationResult, ServerEntry, SyncOperation, Viewer } from "./types";
+import { normalizeDirection, normalizeLine, normalizeObservationType, normalizeVehicleNote, normalizeVehicleNumber } from "../shared/tram";
+import type { AccessCache, EntrySyncOperation, LocalEntry, LocalVehicleNote, MutationResult, ServerEntry, ServerVehicleNote, SyncOperation, VehicleNoteSyncOperation, Viewer } from "./types";
 
 const DB_NAME = "tram-vehicle-saver";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const ENTRY_STORE = "entries";
+const VEHICLE_NOTE_STORE = "vehicleNotes";
 const META_STORE = "meta";
 const SYNC_STORE = "syncQueue";
 export const PRIOR_AUTH_KEY = "priorAuthorized";
@@ -57,8 +58,8 @@ export function operationDebug(operation: SyncOperation) {
   return {
     opKey: operation.opKey,
     type: operation.type,
-    clientEntryId: operation.clientEntryId,
-    hasServerId: Boolean(operation.serverId),
+    itemId: operation.type === "vehicle_note" ? operation.vehicleNumber : operation.clientEntryId,
+    hasServerId: operation.type === "vehicle_note" ? false : Boolean(operation.serverId),
     attempts: operation.attempts,
     nextAttemptAt: operation.nextAttemptAt || "",
     lastError: operation.lastError || ""
@@ -137,7 +138,9 @@ export function errorMessage(err: unknown) {
 export async function syncPendingEntries(args: {
   saveEntry: (entry: LocalEntry) => Promise<MutationResult>;
   deleteEntry: (id: string) => Promise<MutationResult>;
+  saveVehicleNote: (vehicleNumber: string, note: string) => Promise<MutationResult>;
   setLocalEntries: (entries: LocalEntry[]) => void;
+  setLocalVehicleNotes: (notes: LocalVehicleNote[]) => void;
   setPendingOperationCount: (count: number) => void;
   setSyncing: (value: boolean) => void;
   setMessage: (value: string) => void;
@@ -172,6 +175,13 @@ export async function syncPendingEntries(args: {
         continue;
       }
 
+      if (operation.type === "vehicle_note") {
+        const result = await runVehicleNoteOperation(operation, args.saveVehicleNote);
+        completed += result === "completed" ? 1 : 0;
+        failed += result === "failed" ? 1 : 0;
+        continue;
+      }
+
       const result = await runUpsertOperation(operation, args.saveEntry);
       completed += result === "completed" ? 1 : 0;
       failed += result === "failed" ? 1 : 0;
@@ -184,7 +194,7 @@ export async function syncPendingEntries(args: {
       args.setMessage("Everything is synced.");
     }
 
-    await refreshLocalState(args.setLocalEntries, args.setPendingOperationCount);
+    await refreshLocalState(args.setLocalEntries, args.setLocalVehicleNotes, args.setPendingOperationCount);
     if (failed === 0 && (completed > 0 || args.force)) {
       const syncedAt = new Date().toISOString();
       args.setLastSuccessfulSyncAt(syncedAt);
@@ -204,7 +214,7 @@ export async function syncPendingEntries(args: {
 export async function mergeServerEntries(serverEntries: ServerEntry[]) {
   const localEntries = await getLocalEntries();
   const localByClientId = new Map(localEntries.map((entry) => [entry.clientEntryId, entry]));
-  const pendingUpsertIds = new Set((await getSyncOperations()).filter((operation) => operation.type === "upsert").map((operation) => operation.clientEntryId));
+  const pendingUpsertIds = new Set((await getSyncOperations()).flatMap((operation) => operation.type === "upsert" ? [operation.clientEntryId] : []));
   const pendingDeleteIds = await getPendingDeleteClientIds();
 
   for (const serverEntry of serverEntries) {
@@ -224,6 +234,46 @@ export async function mergeServerEntries(serverEntries: ServerEntry[]) {
 
     await putLocalEntry(localEntryFromServerEntry(serverEntry));
   }
+}
+
+export async function mergeServerVehicleNotes(serverNotes: ServerVehicleNote[]) {
+  const serverByNumber = new Map<string, LocalVehicleNote>();
+  for (const serverNote of serverNotes) {
+    const vehicleNumber = normalizeVehicleNumber(serverNote.vehicleNumber);
+    const note = normalizeVehicleNote(serverNote.note);
+    if (!vehicleNumber || !note) continue;
+    serverByNumber.set(vehicleNumber, {
+      vehicleNumber,
+      note,
+      syncStatus: "synced",
+      lastError: "",
+      updatedAt: serverNote.updatedAt || new Date().toISOString()
+    });
+  }
+
+  const db = await openLocalDb();
+  const transaction = db.transaction(VEHICLE_NOTE_STORE, "readwrite");
+  const store = transaction.objectStore(VEHICLE_NOTE_STORE);
+  const request = store.getAll();
+  const completion = transactionResult(db, transaction, () => undefined);
+
+  request.onsuccess = () => {
+    const localNotes = (request.result as LocalVehicleNote[]).map(normalizeLocalVehicleNote);
+    const localByNumber = new Map(localNotes.map((note) => [note.vehicleNumber, note]));
+
+    for (const [vehicleNumber, serverNote] of serverByNumber) {
+      const localNote = localByNumber.get(vehicleNumber);
+      if (!localNote || localNote.syncStatus === "synced") store.put(serverNote);
+    }
+
+    for (const localNote of localNotes) {
+      if (localNote.syncStatus === "synced" && !serverByNumber.has(localNote.vehicleNumber)) {
+        store.delete(localNote.vehicleNumber);
+      }
+    }
+  };
+
+  await completion;
 }
 
 export function localEntryFromServerEntry(serverEntry: ServerEntry): LocalEntry {
@@ -251,7 +301,7 @@ export function localEntryFromServerEntry(serverEntry: ServerEntry): LocalEntry 
   };
 }
 
-async function runUpsertOperation(operation: SyncOperation, saveEntry: (entry: LocalEntry) => Promise<MutationResult>) {
+async function runUpsertOperation(operation: EntrySyncOperation, saveEntry: (entry: LocalEntry) => Promise<MutationResult>) {
   const entry = await getLocalEntry(operation.clientEntryId);
   if (!entry) {
     debugSync("upsert-drop-missing-entry", operationDebug(operation));
@@ -289,7 +339,7 @@ async function runUpsertOperation(operation: SyncOperation, saveEntry: (entry: L
   }
 }
 
-async function runDeleteOperation(operation: SyncOperation, deleteEntry: (id: string) => Promise<MutationResult>) {
+async function runDeleteOperation(operation: EntrySyncOperation, deleteEntry: (id: string) => Promise<MutationResult>) {
   try {
     debugSync("delete-attempt", operationDebug(operation));
     const result = await deleteEntry(operation.serverId || operation.clientEntryId);
@@ -308,21 +358,124 @@ async function runDeleteOperation(operation: SyncOperation, deleteEntry: (id: st
   }
 }
 
+async function runVehicleNoteOperation(operation: VehicleNoteSyncOperation, saveVehicleNote: (vehicleNumber: string, note: string) => Promise<MutationResult>) {
+  const localNote = await getLocalVehicleNote(operation.vehicleNumber);
+  if (!localNote) {
+    await removeSyncOperationIfCurrent(operation);
+    return "completed";
+  }
+
+  try {
+    debugSync("vehicle-note-attempt", operationDebug(operation));
+    const result = await saveVehicleNote(localNote.vehicleNumber, localNote.note);
+    if (result?.ok) {
+      const settled = await settleLocalVehicleNoteIfCurrent(localNote);
+      const removed = await removeSyncOperationIfCurrent(operation);
+      if (!settled || !removed) {
+        const replacement = await getSyncOperation(operation.opKey);
+        if (replacement?.type === "vehicle_note" && replacement.updatedAt !== operation.updatedAt) {
+          return runVehicleNoteOperation(replacement, saveVehicleNote);
+        }
+      }
+      debugSync("vehicle-note-complete", operationDebug(operation));
+      return "completed";
+    }
+
+    const reason = result?.reason ?? "note sync failed";
+    await failVehicleNoteIfCurrent(operation, localNote, reason);
+    return "failed";
+  } catch (err) {
+    await failVehicleNoteIfCurrent(operation, localNote, errorMessage(err));
+    return "failed";
+  }
+}
+
+async function settleLocalVehicleNoteIfCurrent(submitted: LocalVehicleNote) {
+  const db = await openLocalDb();
+  const transaction = db.transaction(VEHICLE_NOTE_STORE, "readwrite");
+  const store = transaction.objectStore(VEHICLE_NOTE_STORE);
+  const request = store.get(submitted.vehicleNumber);
+  let settled = false;
+
+  request.onsuccess = () => {
+    const current = request.result as LocalVehicleNote | undefined;
+    if (!current || current.note !== submitted.note || current.updatedAt !== submitted.updatedAt) return;
+    settled = true;
+    if (submitted.note) {
+      store.put({ ...submitted, syncStatus: "synced", lastError: "" });
+    } else {
+      store.delete(submitted.vehicleNumber);
+    }
+  };
+
+  return transactionResult(db, transaction, () => settled);
+}
+
+async function removeSyncOperationIfCurrent(operation: SyncOperation) {
+  const db = await openLocalDb();
+  const transaction = db.transaction(SYNC_STORE, "readwrite");
+  const store = transaction.objectStore(SYNC_STORE);
+  const request = store.get(operation.opKey);
+  let removed = false;
+
+  request.onsuccess = () => {
+    const current = request.result as SyncOperation | undefined;
+    if (!current || current.updatedAt !== operation.updatedAt) return;
+    removed = true;
+    store.delete(operation.opKey);
+  };
+
+  return transactionResult(db, transaction, () => removed);
+}
+
+async function failVehicleNoteIfCurrent(operation: VehicleNoteSyncOperation, submitted: LocalVehicleNote, reason: string) {
+  const { failedOperation, retryDelayMs } = failedOperationFor(operation, reason);
+  const db = await openLocalDb();
+
+  const transaction = db.transaction([SYNC_STORE, VEHICLE_NOTE_STORE], "readwrite");
+  const operationStore = transaction.objectStore(SYNC_STORE);
+  const noteStore = transaction.objectStore(VEHICLE_NOTE_STORE);
+  const operationRequest = operationStore.get(operation.opKey);
+  const completion = transactionResult(db, transaction, () => undefined);
+
+  operationRequest.onsuccess = () => {
+    const currentOperation = operationRequest.result as SyncOperation | undefined;
+    if (!currentOperation || currentOperation.updatedAt !== operation.updatedAt) return;
+    operationStore.put(failedOperation);
+
+    const noteRequest = noteStore.get(submitted.vehicleNumber);
+    noteRequest.onsuccess = () => {
+      const currentNote = noteRequest.result as LocalVehicleNote | undefined;
+      if (!currentNote || currentNote.note !== submitted.note || currentNote.updatedAt !== submitted.updatedAt) return;
+      noteStore.put({ ...submitted, syncStatus: "failed", lastError: reason, updatedAt: failedOperation.updatedAt });
+    };
+  };
+
+  await completion;
+
+  debugSync("operation-failed", { ...operationDebug(failedOperation), retryDelayMs });
+}
+
 async function failOperation(operation: SyncOperation, reason: string) {
+  const { failedOperation, retryDelayMs } = failedOperationFor(operation, reason);
+  debugSync("operation-failed", { ...operationDebug(failedOperation), retryDelayMs });
+  await putSyncOperation(failedOperation);
+}
+
+function failedOperationFor<T extends SyncOperation>(operation: T, reason: string) {
   const attempts = operation.attempts + 1;
   const retryDelayMs = Math.min(5 * 60 * 1000, Math.max(5000, attempts * 10000));
-  const failedOperation = {
-    ...operation,
-    attempts,
-    lastError: reason,
-    updatedAt: new Date().toISOString(),
-    nextAttemptAt: new Date(Date.now() + retryDelayMs).toISOString()
-  };
-  debugSync("operation-failed", {
-    ...operationDebug(failedOperation),
+  const failedAt = Date.now();
+  return {
+    failedOperation: {
+      ...operation,
+      attempts,
+      lastError: reason,
+      updatedAt: new Date(failedAt).toISOString(),
+      nextAttemptAt: new Date(failedAt + retryDelayMs).toISOString()
+    } as T,
     retryDelayMs
-  });
-  await putSyncOperation(failedOperation);
+  };
 }
 
 function isOperationDue(operation: SyncOperation) {
@@ -334,9 +487,14 @@ function isOperationDue(operation: SyncOperation) {
   return Number.isNaN(retryAt) || retryAt <= Date.now();
 }
 
-export async function refreshLocalState(setLocalEntries: (entries: LocalEntry[]) => void, setPendingOperationCount: (count: number) => void) {
-  const [entries, operations] = await Promise.all([getLocalEntries(), getSyncOperations()]);
+export async function refreshLocalState(
+  setLocalEntries: (entries: LocalEntry[]) => void,
+  setLocalVehicleNotes: (notes: LocalVehicleNote[]) => void,
+  setPendingOperationCount: (count: number) => void
+) {
+  const [entries, notes, operations] = await Promise.all([getLocalEntries(), getLocalVehicleNotes(), getSyncOperations()]);
   setLocalEntries(entries);
+  setLocalVehicleNotes(notes);
   setPendingOperationCount(operations.length);
 }
 
@@ -356,6 +514,9 @@ function openLocalDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(ENTRY_STORE)) {
         db.createObjectStore(ENTRY_STORE, { keyPath: "clientEntryId" });
       }
+      if (!db.objectStoreNames.contains(VEHICLE_NOTE_STORE)) {
+        db.createObjectStore(VEHICLE_NOTE_STORE, { keyPath: "vehicleNumber" });
+      }
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: "key" });
       }
@@ -366,6 +527,25 @@ function openLocalDb(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
   });
+}
+
+function transactionResult<T>(db: IDBDatabase, transaction: IDBTransaction, result: () => T): Promise<T> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => { db.close(); resolve(result()); };
+    transaction.onerror = () => { db.close(); reject(transaction.error); };
+    transaction.onabort = () => { db.close(); reject(transaction.error); };
+  });
+}
+
+async function runStoreRequest<T>(
+  storeName: string,
+  mode: IDBTransactionMode,
+  createRequest: (store: IDBObjectStore) => IDBRequest<T>
+): Promise<T> {
+  const db = await openLocalDb();
+  const transaction = db.transaction(storeName, mode);
+  const request = createRequest(transaction.objectStore(storeName));
+  return transactionResult(db, transaction, () => request.result);
 }
 
 export async function migrateLegacyDeletePendingEntries(): Promise<void> {
@@ -418,63 +598,87 @@ export async function wakeFailedSyncOperations(): Promise<void> {
 }
 
 export async function getLocalEntries(): Promise<LocalEntry[]> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(ENTRY_STORE, "readonly").objectStore(ENTRY_STORE).getAll();
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve((request.result as LocalEntry[]).map(normalizeLocalEntry));
-    };
-  });
+  const entries = await runStoreRequest<LocalEntry[]>(ENTRY_STORE, "readonly", (store) => store.getAll());
+  return entries.map(normalizeLocalEntry);
 }
 
 export async function getLocalEntry(clientEntryId: string): Promise<LocalEntry | null> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(ENTRY_STORE, "readonly").objectStore(ENTRY_STORE).get(clientEntryId);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve(request.result ? normalizeLocalEntry(request.result as LocalEntry) : null);
-    };
-  });
+  const entry = await runStoreRequest<LocalEntry | undefined>(ENTRY_STORE, "readonly", (store) => store.get(clientEntryId));
+  return entry ? normalizeLocalEntry(entry) : null;
 }
 
 export async function putLocalEntry(entry: LocalEntry): Promise<void> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(ENTRY_STORE, "readwrite").objectStore(ENTRY_STORE).put(normalizeLocalEntry(entry));
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve();
-    };
-  });
+  await runStoreRequest(ENTRY_STORE, "readwrite", (store) => store.put(normalizeLocalEntry(entry)));
 }
 
 export async function removeLocalEntry(clientEntryId: string): Promise<void> {
+  await runStoreRequest(ENTRY_STORE, "readwrite", (store) => store.delete(clientEntryId));
+}
+
+export async function getLocalVehicleNotes(): Promise<LocalVehicleNote[]> {
+  const notes = await runStoreRequest<LocalVehicleNote[]>(VEHICLE_NOTE_STORE, "readonly", (store) => store.getAll());
+  return notes.map(normalizeLocalVehicleNote);
+}
+
+export async function getLocalVehicleNote(vehicleNumber: string): Promise<LocalVehicleNote | null> {
+  const normalizedNumber = normalizeVehicleNumber(vehicleNumber);
+  if (!normalizedNumber) return null;
+  const note = await runStoreRequest<LocalVehicleNote | undefined>(VEHICLE_NOTE_STORE, "readonly", (store) => store.get(normalizedNumber));
+  return note ? normalizeLocalVehicleNote(note) : null;
+}
+
+export async function putLocalVehicleNote(note: LocalVehicleNote): Promise<void> {
+  const normalized = normalizeLocalVehicleNote(note);
+  if (!normalized.vehicleNumber) return;
+  await runStoreRequest(VEHICLE_NOTE_STORE, "readwrite", (store) => store.put(normalized));
+}
+
+export async function putPendingVehicleNote(note: LocalVehicleNote): Promise<void> {
+  const normalized = normalizeLocalVehicleNote(note);
+  if (!normalized.vehicleNumber) return;
+
+  const opKey = syncOpKey("vehicle_note", normalized.vehicleNumber);
   const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(ENTRY_STORE, "readwrite").objectStore(ENTRY_STORE).delete(clientEntryId);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
+  const transaction = db.transaction([VEHICLE_NOTE_STORE, SYNC_STORE], "readwrite");
+  const operationStore = transaction.objectStore(SYNC_STORE);
+  const operationRequest = operationStore.get(opKey);
+  const completion = transactionResult(db, transaction, () => undefined);
+  let operation: VehicleNoteSyncOperation | undefined;
+
+  operationRequest.onsuccess = () => {
+    const existing = operationRequest.result as SyncOperation | undefined;
+    operation = {
+      opKey,
+      type: "vehicle_note",
+      vehicleNumber: normalized.vehicleNumber,
+      createdAt: existing?.createdAt ?? normalized.updatedAt,
+      updatedAt: normalized.updatedAt,
+      nextAttemptAt: "",
+      attempts: existing?.attempts ?? 0,
+      lastError: ""
     };
-    request.onsuccess = () => {
-      db.close();
-      resolve();
-    };
-  });
+    transaction.objectStore(VEHICLE_NOTE_STORE).put(normalized);
+    operationStore.put(operation);
+  };
+
+  await completion;
+  if (operation) debugSync("enqueue-vehicle-note", operationDebug(operation));
+}
+
+export async function removeLocalVehicleNote(vehicleNumber: string): Promise<void> {
+  const normalizedNumber = normalizeVehicleNumber(vehicleNumber);
+  if (!normalizedNumber) return;
+  await runStoreRequest(VEHICLE_NOTE_STORE, "readwrite", (store) => store.delete(normalizedNumber));
+}
+
+function normalizeLocalVehicleNote(note: LocalVehicleNote): LocalVehicleNote {
+  return {
+    vehicleNumber: normalizeVehicleNumber(note.vehicleNumber),
+    note: normalizeVehicleNote(note.note),
+    syncStatus: note.syncStatus ?? "synced",
+    lastError: note.lastError ?? "",
+    updatedAt: note.updatedAt || new Date().toISOString()
+  };
 }
 
 function normalizeLocalEntry(entry: LocalEntry): LocalEntry {
@@ -493,30 +697,19 @@ function normalizeLocalEntry(entry: LocalEntry): LocalEntry {
 }
 
 export async function enqueueUpsertOperation(entry: LocalEntry): Promise<void> {
-  const opKey = syncOpKey("upsert", entry.clientEntryId);
-  const existing = await getSyncOperation(opKey);
-  const operation = {
-    opKey,
-    type: "upsert",
-    clientEntryId: entry.clientEntryId,
-    serverId: entry.serverId,
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    nextAttemptAt: "",
-    attempts: existing?.attempts ?? 0,
-    lastError: ""
-  } satisfies SyncOperation;
-
-  debugSync("enqueue-upsert", operationDebug(operation));
-  await putSyncOperation(operation);
+  await enqueueEntryOperation("upsert", entry);
 }
 
 export async function enqueueDeleteOperation(entry: LocalEntry): Promise<void> {
-  const opKey = syncOpKey("delete", entry.clientEntryId);
+  await enqueueEntryOperation("delete", entry);
+}
+
+async function enqueueEntryOperation(type: "upsert" | "delete", entry: LocalEntry) {
+  const opKey = syncOpKey(type, entry.clientEntryId);
   const existing = await getSyncOperation(opKey);
   const operation = {
     opKey,
-    type: "delete",
+    type,
     clientEntryId: entry.clientEntryId,
     serverId: entry.serverId,
     createdAt: existing?.createdAt ?? new Date().toISOString(),
@@ -526,92 +719,39 @@ export async function enqueueDeleteOperation(entry: LocalEntry): Promise<void> {
     lastError: ""
   } satisfies SyncOperation;
 
-  debugSync("enqueue-delete", operationDebug(operation));
+  debugSync(`enqueue-${type}`, operationDebug(operation));
   await putSyncOperation(operation);
 }
 
 export async function getSyncOperations(): Promise<SyncOperation[]> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(SYNC_STORE, "readonly").objectStore(SYNC_STORE).getAll();
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve((request.result as SyncOperation[]).sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
-    };
-  });
+  const operations = await runStoreRequest<SyncOperation[]>(SYNC_STORE, "readonly", (store) => store.getAll());
+  return operations.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function getSyncOperation(opKey: string): Promise<SyncOperation | null> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(SYNC_STORE, "readonly").objectStore(SYNC_STORE).get(opKey);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve((request.result as SyncOperation | undefined) ?? null);
-    };
-  });
+  return (await runStoreRequest<SyncOperation | undefined>(SYNC_STORE, "readonly", (store) => store.get(opKey))) ?? null;
 }
 
 export async function putSyncOperation(operation: SyncOperation): Promise<void> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(SYNC_STORE, "readwrite").objectStore(SYNC_STORE).put(operation);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve();
-    };
-  });
+  await runStoreRequest(SYNC_STORE, "readwrite", (store) => store.put(operation));
 }
 
 export async function removeSyncOperation(opKey: string): Promise<void> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(SYNC_STORE, "readwrite").objectStore(SYNC_STORE).delete(opKey);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve();
-    };
-  });
+  await runStoreRequest(SYNC_STORE, "readwrite", (store) => store.delete(opKey));
 }
 
 export async function getPendingDeleteClientIds(): Promise<Set<string>> {
   const operations = await getSyncOperations();
-  return new Set(operations.filter((operation) => operation.type === "delete").map((operation) => operation.clientEntryId));
+  return new Set(operations.flatMap((operation) => operation.type === "delete" ? [operation.clientEntryId] : []));
 }
 
-export function syncOpKey(type: SyncOperation["type"], clientEntryId: string) {
-  return type + ":" + clientEntryId;
+export function syncOpKey(type: SyncOperation["type"], itemId: string) {
+  return type + ":" + itemId;
 }
 
 export async function readMeta(key: string): Promise<string> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(META_STORE, "readonly").objectStore(META_STORE).get(key);
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve(String(request.result?.value ?? ""));
-    };
-  });
+  const record = await runStoreRequest<{ key: string; value: string } | undefined>(META_STORE, "readonly", (store) => store.get(key));
+  return String(record?.value ?? "");
 }
 
 export async function readAccessCache(): Promise<AccessCache | null> {
@@ -710,16 +850,5 @@ export function clearAccessCacheMirror() {
 }
 
 export async function writeMeta(key: string, value: string): Promise<void> {
-  const db = await openLocalDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(META_STORE, "readwrite").objectStore(META_STORE).put({ key, value });
-    request.onerror = () => {
-      db.close();
-      reject(request.error);
-    };
-    request.onsuccess = () => {
-      db.close();
-      resolve();
-    };
-  });
+  await runStoreRequest(META_STORE, "readwrite", (store) => store.put({ key, value }));
 }

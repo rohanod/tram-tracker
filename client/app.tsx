@@ -1,7 +1,7 @@
 import { signOut, useAuth, useMutation, useQuery } from "lakebed/client";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { canUseTracker as trackerAccessAllowed } from "../shared/auth";
-import { classifyCapture, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, normalizeObservationType, normalizeVehicleNumber, vehicleHistoryMessage } from "../shared/tram";
+import { classifyCapture, isValidVehicleNumber, normalizeDirection, normalizeLine, normalizeLocation, normalizeObservationType, normalizeVehicleNote, normalizeVehicleNumber, vehicleHistoryMessage } from "../shared/tram";
 import { DEFAULT_REVIEW_FILTERS } from "../shared/review";
 import { APP_CSS } from "./app-styles";
 import { DESIGN_SYSTEM_CSS } from "./design-system";
@@ -10,14 +10,14 @@ import { DEFAULT_LINE_CATALOG, installPwaAssets, lastSyncText, requestLocation }
 import {
   LAST_SYNC_META_KEY, PRIOR_AUTH_KEY, clearAccessCache, createClientEntryId, debugSync, enqueueDeleteOperation,
   enqueueUpsertOperation, errorMessage, getSyncOperation, migrateLegacyDeletePendingEntries, migrateLegacyDirections,
-  putLocalEntry, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation,
+  putLocalEntry, putPendingVehicleNote, readAccessCache, readAccessCacheMirror, readMeta, removeLocalEntry, removeSyncOperation,
   shouldClearAccessCacheForViewer, syncOpKey, wakeFailedSyncOperations, writeAccessCache, writeMeta
 } from "./local-store";
-import { localEntryFromServerEntry, mergeServerEntries, refreshLocalState, syncPendingEntries } from "./local-sync";
+import { localEntryFromServerEntry, mergeServerEntries, mergeServerVehicleNotes, refreshLocalState, syncPendingEntries } from "./local-sync";
 import { shortcutPrefillFromSearch } from "./prefill";
 import { TrackerScreen, type ReviewFilters } from "./screens";
 import { loadTransitData } from "./transit-data";
-import type { LineInfo, LocalEntry, LocationState, MutationResult, ServerEntry, TransitDataConfig, UserSettings, Viewer } from "./types";
+import type { LineInfo, LocalEntry, LocalVehicleNote, LocationState, MutationResult, ServerEntry, ServerVehicleNote, TransitDataConfig, UserSettings, Viewer } from "./types";
 import { AuthGate, Toast } from "./ui";
 import { UploadDataPage } from "./upload-data";
 
@@ -35,17 +35,24 @@ export function App() {
 }
 
 function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
-  const viewer = useQuery<Viewer>("viewer") as Viewer | undefined;
+  const viewerQuery = useQuery<Viewer>("viewer") as Viewer | [] | undefined;
+  const vehicleNotesQuery = useQuery<{ items: ServerVehicleNote[] }>("vehicleNotes") as { items: ServerVehicleNote[] } | [] | undefined;
+  const settingsQuery = useQuery<UserSettings>("settings") as UserSettings | [] | undefined;
+  const transitQuery = useQuery<TransitDataConfig | null>("transitData") as TransitDataConfig | [] | null | undefined;
+  const viewer = Array.isArray(viewerQuery) ? undefined : viewerQuery;
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
-  const serverSettings = useQuery<UserSettings>("settings") as UserSettings | undefined;
-  const transitConfig = useQuery<TransitDataConfig | null>("transitData") as TransitDataConfig | null | undefined;
+  const serverVehicleNotes = Array.isArray(vehicleNotesQuery) ? undefined : vehicleNotesQuery?.items;
+  const serverSettings = Array.isArray(settingsQuery) ? undefined : settingsQuery;
+  const transitConfig = Array.isArray(transitQuery) ? undefined : transitQuery;
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
+  const saveVehicleNote = useMutation<[vehicleNumber: string, note: string], MutationResult>("saveVehicleNote");
   const saveSettings = useMutation<[settings: UserSettings], MutationResult & UserSettings>("saveSettings");
   const migrateLegacyOwner = useMutation<[], MutationResult>("migrateLegacyOwner");
   const migrateDirections = useMutation<[], MutationResult>("migrateDirections");
 
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
+  const [localVehicleNotes, setLocalVehicleNotes] = useState<LocalVehicleNote[]>([]);
   const [localHydrated, setLocalHydrated] = useState(false);
   const [lineCatalog, setLineCatalog] = useState<Record<string, LineInfo>>(DEFAULT_LINE_CATALOG);
   const [defaultLines, setDefaultLines] = useState(DEFAULT_LINES);
@@ -71,6 +78,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const directionsMigrated = useRef(false);
   const prefillApplied = useRef(false);
 
+  const accessLoading = auth.isLoading || viewer === undefined;
   const isLocalGuest = Boolean(viewer?.isGuest && isLocalHostname(window.location.hostname));
   const offlineAccessAllowed = !isOnline && priorAuthorized && cachedAccessAllowed;
   const canUseTracker = trackerAccessAllowed({
@@ -81,11 +89,15 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
     cachedAccessAllowed
   });
   const visibleEntries = useMemo(() => mergeVisibleEntries(serverEntries, localEntries), [serverEntries, localEntries]);
+  const vehicleNotesByNumber = useMemo(
+    () => new Map(localVehicleNotes.filter((item) => Boolean(item.note)).map((item) => [item.vehicleNumber, item])),
+    [localVehicleNotes]
+  );
 
   useEffect(() => {
     installPwaAssets();
     void Promise.allSettled([migrateLegacyDeletePendingEntries(), migrateLegacyDirections(), wakeFailedSyncOperations()])
-      .then(() => refreshLocalState(setLocalEntries, setPendingCount))
+      .then(() => refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount))
       .then(() => setLocalHydrated(true))
       .catch((error) => { setLoadError(errorMessage(error)); setLocalHydrated(true); });
     void readMeta(PRIOR_AUTH_KEY).then((value) => setPriorAuthorized(value === "true"));
@@ -130,8 +142,13 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   useEffect(() => {
     if (!viewer?.isAllowed) return;
-    void mergeServerEntries(serverEntries).then(() => refreshLocalState(setLocalEntries, setPendingCount));
+    void mergeServerEntries(serverEntries).then(() => refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount));
   }, [viewer?.isAllowed, serverEntries.map((entry) => `${entry.id}:${entry.updatedAt}:${entry.savedLine}:${entry.savedLeg}`).join("|")]);
+
+  useEffect(() => {
+    if (!viewer?.isAllowed || !serverVehicleNotes) return;
+    void mergeServerVehicleNotes(serverVehicleNotes).then(() => refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount));
+  }, [viewer?.isAllowed, serverVehicleNotes?.map((item) => `${item.id}:${item.updatedAt}:${item.note}`).join("|")]);
 
   useEffect(() => {
     if (!viewer?.isAllowed || ownerMigrationStarted.current) return;
@@ -157,7 +174,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
       if (pending !== "true") return;
       const result = await saveSettings({ defaultLines });
       if (result.ok) await writeMeta(SETTINGS_PENDING_KEY, "false");
-    });
+    }).catch((error) => debugSync("settings-sync-error", { error: errorMessage(error) }));
   }, [viewer?.isAllowed, isOnline]);
 
   useEffect(() => {
@@ -178,7 +195,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, [toast]);
 
   async function runSync(force: boolean) {
-    await syncPendingEntries({ saveEntry, deleteEntry, setLocalEntries, setPendingOperationCount: setPendingCount, setSyncing, setMessage: setToast, setLastSuccessfulSyncAt: setLastSyncAt, syncInFlight, force })
+    await syncPendingEntries({ saveEntry, deleteEntry, saveVehicleNote, setLocalEntries, setLocalVehicleNotes, setPendingOperationCount: setPendingCount, setSyncing, setMessage: setToast, setLastSuccessfulSyncAt: setLastSyncAt, syncInFlight, force })
       .catch((error) => { debugSync("sync-error", { error: errorMessage(error) }); setToast("Sync failed. Try again."); });
   }
 
@@ -247,8 +264,24 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   async function persistEntry(entry: LocalEntry) {
     await putLocalEntry(entry);
     await enqueueUpsertOperation(entry);
-    await refreshLocalState(setLocalEntries, setPendingCount);
+    await refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount);
     setSyncKick((value) => value + 1);
+  }
+
+  async function persistVehicleNote(vehicleNumberValue: string, noteValue: string) {
+    const vehicleNumber = normalizeVehicleNumber(vehicleNumberValue);
+    if (!vehicleNumber) throw new Error("Invalid vehicle number.");
+    const note = normalizeVehicleNote(noteValue);
+    await putPendingVehicleNote({
+      vehicleNumber,
+      note,
+      syncStatus: "pending",
+      lastError: "",
+      updatedAt: new Date().toISOString()
+    });
+    await refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount);
+    setSyncKick((value) => value + 1);
+    setToast(note ? (isOnline ? "Vehicle note saved. Syncing now." : "Vehicle note saved offline.") : "Vehicle note removed.");
   }
 
   async function removeEntry(entry: LocalEntry) {
@@ -256,7 +289,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
     await removeLocalEntry(entry.clientEntryId);
     await removeSyncOperation(syncOpKey("upsert", entry.clientEntryId));
     if (entry.serverId || entry.syncStatus === "synced" || (pendingUpsert?.attempts ?? 0) > 0) await enqueueDeleteOperation(entry);
-    await refreshLocalState(setLocalEntries, setPendingCount);
+    await refreshLocalState(setLocalEntries, setLocalVehicleNotes, setPendingCount);
     setDialog("");
     setActiveEntry(null);
     setSyncKick((value) => value + 1);
@@ -280,14 +313,14 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const styles = <style>{DESIGN_SYSTEM_CSS + APP_CSS}</style>;
   if (window.location.pathname === "/upload-data" || window.location.hash === "#/upload-data") {
-    return <>{styles}<UploadDataPage authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
+    return <>{styles}<UploadDataPage authLoading={accessLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
   }
-  if (!canUseTracker) return <>{styles}<AuthGate authLoading={auth.isLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={offlineAccessAllowed} /></>;
+  if (!canUseTracker) return <>{styles}<AuthGate authLoading={accessLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={offlineAccessAllowed} /></>;
 
   return <>{styles}
     <TrackerScreen
-      entries={visibleEntries} filters={filters} lineCatalog={lineCatalog} isOnline={isOnline}
-      isLoading={!localHydrated || (!viewer && auth.isLoading)} loadError={loadError}
+      entries={visibleEntries} vehicleNotes={vehicleNotesByNumber} filters={filters} lineCatalog={lineCatalog} isOnline={isOnline}
+      isLoading={!localHydrated || accessLoading} loadError={loadError}
       lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} pendingCount={pendingCount}
       onChangeFilters={setFilters} onNew={openCreate}
       onOpen={(entry) => { setActiveEntry(entry); setDialog("details"); }}
@@ -296,7 +329,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
     />
     {dialog === "create" ? <EntryDialog mode="create" initialValue={createSeed} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("")} onSubmit={(value) => void createEntry(value)} /> : null}
     {dialog === "edit" && activeEntry ? <EntryDialog mode="edit" entry={activeEntry} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("details")} onSubmit={(value) => void updateEntry(value)} /> : null}
-    {dialog === "details" && activeEntry ? <EntryDetailsDialog entry={activeEntry} lineCatalog={lineCatalog} onClose={() => setDialog("")} onEdit={() => { setDialogError(""); setDialog("edit"); }} onDelete={() => void removeEntry(activeEntry)} /> : null}
+    {dialog === "details" && activeEntry ? <EntryDetailsDialog entry={activeEntry} vehicleNote={vehicleNotesByNumber.get(activeEntry.vehicleNumber)?.note ?? ""} lineCatalog={lineCatalog} onClose={() => setDialog("")} onEdit={() => { setDialogError(""); setDialog("edit"); }} onDelete={() => void removeEntry(activeEntry)} onSaveVehicleNote={(note) => persistVehicleNote(activeEntry.vehicleNumber, note)} /> : null}
     {dialog === "settings" ? <SettingsDialog defaultLines={defaultLines} lineCatalog={lineCatalog} busy={busy} syncing={syncing} lastSyncLabel={lastSyncText(lastSyncAt, syncing, pendingCount)} onClose={() => setDialog("")} onSave={(lines) => void updateDefaults(lines)} onSync={() => isLocalGuest ? setToast("Local guest entries stay on this device.") : void runSync(true)} onSignOut={() => signOut()} /> : null}
     {dialog === "filters" ? <FiltersDialog filters={filters} lineCatalog={lineCatalog} onClose={() => setDialog("")} onApply={(next) => { setFilters(next); setDialog(""); }} /> : null}
     {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}

@@ -1,5 +1,6 @@
 import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
 import { configuredUserId, isAllowedIdentity, legacyOwnerId } from "../shared/auth";
+import { collectTransitCleanupKeys, parseCleanupKeys, utf8ByteLength } from "../shared/sync";
 import {
   classifyCapture,
   isValidVehicleNumber,
@@ -7,6 +8,7 @@ import {
   normalizeLine,
   normalizeLocation,
   normalizeObservationType,
+  normalizeVehicleNote,
   normalizeVehicleNumber,
   nearestTransitStops,
   roundCoordinate,
@@ -44,6 +46,13 @@ export default capsule({
       .index("by_owner", ["ownerId"])
       .index("by_owner_client", ["ownerId", "clientEntryId"])
       .index("by_owner_vehicle", ["ownerId", "vehicleNumber"]),
+    vehicleNotes: table({
+      ownerId: string(),
+      vehicleNumber: string(),
+      note: string()
+    })
+      .index("by_owner", ["ownerId"])
+      .index("by_owner_vehicle", ["ownerId", "vehicleNumber"]),
     userSettings: table({
       ownerId: string(),
       defaultLines: string()
@@ -56,7 +65,8 @@ export default capsule({
       metadataSize: string(),
       geometryKey: string(),
       geometryUrl: string(),
-      geometrySize: string()
+      geometrySize: string(),
+      pendingDeleteKeys: string()
     }).index("by_owner", ["ownerId"]),
     transitStopIndexes: table({
       ownerId: string(),
@@ -76,6 +86,20 @@ export default capsule({
 
       return (await rowsForOwners(ctx.db.tripEntries, [primaryOwnerIdFor(ctx, viewer)]))
         .sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)));
+    }),
+
+    vehicleNotes: query(async (ctx) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { items: [] };
+      const items = (await rowsForOwners(ctx.db.vehicleNotes, [primaryOwnerIdFor(ctx, viewer)]))
+        .map((row) => ({
+          id: String(row.id ?? ""),
+          vehicleNumber: String(row.vehicleNumber ?? ""),
+          note: String(row.note ?? ""),
+          updatedAt: String(row.updatedAt ?? row.createdAt ?? "")
+        }))
+        .sort((a, b) => a.vehicleNumber.localeCompare(b.vehicleNumber, undefined, { numeric: true }));
+      return { items };
     }),
 
     settings: query(async (ctx) => {
@@ -113,6 +137,31 @@ export default capsule({
       }
 
       const inserted = await ctx.db.tripEntries.insert(prepared.row);
+      return { ok: true, id: inserted?.id ?? "" };
+    }),
+
+    saveVehicleNote: mutation(async (ctx, vehicleNumberValue, noteValue) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
+
+      const vehicleNumber = normalizeVehicleNumber(vehicleNumberValue);
+      if (!isValidVehicleNumber(vehicleNumber)) return { ok: false, reason: "invalid_vehicle_number" };
+
+      const ownerId = primaryOwnerIdFor(ctx, viewer);
+      const note = normalizeVehicleNote(noteValue);
+      const existing = await vehicleNoteFor(ctx, ownerId, vehicleNumber);
+
+      if (!note) {
+        if (existing) await ctx.db.vehicleNotes.delete(existing.id);
+        return { ok: true, id: "" };
+      }
+
+      if (existing) {
+        await ctx.db.vehicleNotes.update(existing.id, { note });
+        return { ok: true, id: existing.id };
+      }
+
+      const inserted = await ctx.db.vehicleNotes.insert({ ownerId, vehicleNumber, note });
       return { ok: true, id: inserted?.id ?? "" };
     }),
 
@@ -208,25 +257,28 @@ export default capsule({
       const stopIndexPayload = normalizeTransitStopIndexPayload(input?.stopsPayload);
       if (!next || !stopIndexPayload) return { ok: false, reason: "invalid_transit_data" };
       const ownerId = primaryOwnerIdFor(ctx, viewer);
-      const existing = await ctx.db.transitData
-        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
-        .first();
-      const existingStopIndex = await ctx.db.transitStopIndexes
-        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
-        .first();
-      const previous = existing ? transitDataResponse(existing) : null;
-      if (existing) {
-        await ctx.db.transitData.update(existing.id, { ownerId, ...next });
-      } else {
-        await ctx.db.transitData.insert({ ownerId, ...next });
-      }
-      const stopIndex = { ownerId, version: next.version, payload: stopIndexPayload };
-      if (existingStopIndex) {
-        await ctx.db.transitStopIndexes.update(existingStopIndex.id, stopIndex);
-      } else {
-        await ctx.db.transitStopIndexes.insert(stopIndex);
-      }
-      return { ok: true, previous, current: next };
+      const existing = await rowsForOwners(ctx.db.transitData, [ownerId]);
+      const existingStopIndexes = await rowsForOwners(ctx.db.transitStopIndexes, [ownerId]);
+      const pendingDeleteKeys = collectTransitCleanupKeys(existing, [next.metadataKey, next.geometryKey]).map(cleanStorageKey).filter(Boolean);
+
+      for (const row of existing) await ctx.db.transitData.delete(row.id);
+      for (const row of existingStopIndexes) await ctx.db.transitStopIndexes.delete(row.id);
+      await ctx.db.transitData.insert({ ownerId, ...next, pendingDeleteKeys: JSON.stringify(pendingDeleteKeys) });
+      await ctx.db.transitStopIndexes.insert({ ownerId, version: next.version, payload: stopIndexPayload });
+      return { ok: true, current: { ...next, cleanupKeys: pendingDeleteKeys } };
+    }),
+
+    acknowledgeTransitCleanup: mutation(async (ctx, input) => {
+      const viewer = viewerFor(ctx);
+      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
+      const ownerId = primaryOwnerIdFor(ctx, viewer);
+      const current = await firstForOwners(ctx.db.transitData, [ownerId]);
+      const version = cleanBounded(input?.version, 80);
+      if (!current || current.version !== version) return { ok: false, reason: "stale_transit_data" };
+      const deleted = new Set(parseCleanupKeys(input?.keys).map(cleanStorageKey).filter(Boolean));
+      const pendingDeleteKeys = parseCleanupKeys(current.pendingDeleteKeys).filter((key) => !deleted.has(key));
+      await ctx.db.transitData.update(current.id, { pendingDeleteKeys: JSON.stringify(pendingDeleteKeys) });
+      return { ok: true, cleanupKeys: pendingDeleteKeys };
     })
   },
 
@@ -462,7 +514,7 @@ function normalizeTransitDataInput(input) {
 
 function normalizeTransitStopIndexPayload(value) {
   const payload = String(value ?? "");
-  if (!payload || payload.length > 500_000) return "";
+  if (!payload || utf8ByteLength(JSON.stringify(payload)) > 65_536) return "";
   try {
     const parsed = JSON.parse(payload);
     if (parsed?.v !== 1 || !Array.isArray(parsed?.s) || !parsed.s.length) return "";
@@ -520,7 +572,8 @@ function transitDataResponse(row) {
     metadataSize: Number(row.metadataSize ?? 0),
     geometryKey: String(row.geometryKey ?? ""),
     geometryUrl: String(row.geometryUrl ?? ""),
-    geometrySize: Number(row.geometrySize ?? 0)
+    geometrySize: Number(row.geometrySize ?? 0),
+    cleanupKeys: parseCleanupKeys(row.pendingDeleteKeys)
   };
 }
 
@@ -629,12 +682,13 @@ async function lookupShortcutEntry(ctx, req) {
   }
 
   const entries = await vehicleEntries(ctx, ownerId, vehicleNumber, "");
+  const vehicleNote = await vehicleNoteFor(ctx, ownerId, vehicleNumber);
   return json(
     {
       ok: true,
       vehicleNumber,
       message: vehicleHistoryMessage(entries[0]),
-      ...vehicleLookupHistory(entries)
+      ...vehicleLookupHistory(entries, vehicleNote?.note)
     },
     jsonOptions(200)
   );
@@ -737,6 +791,12 @@ function shortcutEntryResponse(id, prepared, priorEntry) {
   };
 }
 
+async function vehicleNoteFor(ctx, ownerId, vehicleNumber) {
+  return ctx.db.vehicleNotes
+    .withIndex("by_owner_vehicle", (q) => q.eq("ownerId", ownerId).eq("vehicleNumber", vehicleNumber))
+    .first();
+}
+
 async function vehicleEntries(ctx, ownerId, vehicleNumber, excludedClientEntryId) {
   const entries = await ctx.db.tripEntries
     .withIndex("by_owner_vehicle", (q) => q.eq("ownerId", ownerId).eq("vehicleNumber", vehicleNumber))
@@ -824,8 +884,9 @@ const MANIFEST = {
 };
 
 const SERVICE_WORKER_SOURCE = `
-const CACHE_NAME = "tram-saver-v1";
+const CACHE_NAME = "tram-saver-v2";
 const CORE_URLS = ["/", "/manifest.webmanifest", "/pwa/icon.svg"];
+const STATIC_DESTINATIONS = new Set(["font", "image", "manifest", "script", "style"]);
 const NETWORK_EVENT = "fet" + "ch";
 const networkRequest = self[NETWORK_EVENT].bind(self);
 
@@ -840,30 +901,38 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.allSettled(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.allSettled(keys.filter((key) => key.startsWith("tram-saver-") && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener(NETWORK_EVENT, (event) => {
   const request = event.request;
-  if (request.method !== "GET") {
-    return;
-  }
+  if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) {
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/storage/") || url.pathname.startsWith("/__lakebed/")) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      networkRequest(request)
+        .then((response) => {
+          if (url.search || !response.ok || response.type !== "basic") return response;
+          return caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone())).then(() => response);
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match("/")).then((response) => response || Response.error()))
+    );
     return;
   }
 
+  if (url.search || !STATIC_DESTINATIONS.has(request.destination)) return;
   event.respondWith(
     networkRequest(request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return response;
+        if (!response.ok || response.type !== "basic") return response;
+        return caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone())).then(() => response);
       })
-      .catch(() => caches.match(request).then((cached) => cached || caches.match("/")))
+      .catch(() => caches.match(request).then((response) => response || Response.error()))
   );
 });
 `;

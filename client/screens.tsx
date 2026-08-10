@@ -3,15 +3,16 @@ import { paginateReviewEntries, reviewTripEntries, vehicleFrequencyStats } from 
 import { DateRangeControl, SelectControl, SORT_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from "./filter-controls";
 import { formatEntryDate, lineColor, lineForeground, savedTimeForEntry } from "./format";
 import { SearchIcon, SettingsIcon } from "./ui";
-import type { LineInfo, LocalEntry } from "./types";
+import type { LineInfo, LocalEntry, LocalVehicleNote } from "./types";
 
 export type ReviewFilters = { query: string; line: string; type: string; dateFrom: string; dateTo: string; sort: string };
 
 export function TrackerScreen({
-  entries, filters, lineCatalog, isOnline, isLoading, loadError, lastSyncLabel, pendingCount,
+  entries, vehicleNotes, filters, lineCatalog, isOnline, isLoading, loadError, lastSyncLabel, pendingCount,
   onChangeFilters, onNew, onOpen, onOpenFilters, onOpenSettings, onRetry
 }: {
   entries: LocalEntry[];
+  vehicleNotes: ReadonlyMap<string, LocalVehicleNote>;
   filters: ReviewFilters;
   lineCatalog: Record<string, LineInfo>;
   isOnline: boolean;
@@ -98,9 +99,9 @@ export function TrackerScreen({
               <>
                 <div className="table-wrap">
                   <div className="table-heading"><h2>Recent vehicles</h2><span>{rangeText(desktopPage)}</span></div>
-                  <table className="vehicle-table"><thead><tr><th>Vehicle</th><th>Line</th><th>Direction</th><th>Stop saved</th><th>Date saved</th><th>Action</th></tr></thead><tbody>{desktopPage.entries.map((entry) => <DesktopRow entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} onOpen={onOpen} />)}</tbody></table>
+                  <table className="vehicle-table"><thead><tr><th>Vehicle</th><th>Line</th><th>Journey</th><th>Saved</th></tr></thead><tbody>{desktopPage.entries.map((entry) => <DesktopRow entry={entry} key={entry.clientEntryId} hasNote={vehicleNotes.has(entry.vehicleNumber)} lineCatalog={lineCatalog} onOpen={onOpen} />)}</tbody></table>
                 </div>
-                <div className="mobile-card-list">{mobilePage.entries.map((entry) => <MobileCard entry={entry} key={entry.clientEntryId} lineCatalog={lineCatalog} onOpen={onOpen} />)}</div>
+                <div className="mobile-card-list">{mobilePage.entries.map((entry) => <MobileCard entry={entry} key={entry.clientEntryId} hasNote={vehicleNotes.has(entry.vehicleNumber)} lineCatalog={lineCatalog} onOpen={onOpen} />)}</div>
                 <div className="desktop-pagination"><Pagination page={desktopPage.currentPage} totalPages={desktopPage.totalPages} onPage={setPage} /></div>
                 <div className="mobile-pagination"><Pagination page={mobilePage.currentPage} totalPages={mobilePage.totalPages} onPage={setPage} /></div>
               </>
@@ -132,15 +133,26 @@ function StatTile({ label, stat }: { label: string; stat: { vehicleNumber: strin
   return <div className="stat-tile"><span>{label}</span><div><strong>{stat?.vehicleNumber || "—"}</strong><small>{stat ? `${stat.count} ${stat.count === 1 ? "save" : "saves"}` : "No saves"}</small></div></div>;
 }
 
-function DesktopRow({ entry, lineCatalog, onOpen }: { entry: LocalEntry; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
-  return <tr onDblClick={() => onOpen(entry)}><td><strong>{entry.vehicleNumber}</strong></td><td><LinePill line={entry.savedLine} catalog={lineCatalog} /></td><td>{entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg}</td><td className="muted-cell">{entry.nearestStopName || "—"}</td><td className="muted-cell">{formatEntryDate(savedTimeForEntry(entry))}</td><td><button className="open-entry" type="button" onClick={() => onOpen(entry)}>Open</button></td></tr>;
+function DesktopRow({ entry, hasNote, lineCatalog, onOpen }: { entry: LocalEntry; hasNote: boolean; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
+  const direction = entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg;
+  return <tr onDblClick={() => onOpen(entry)}>
+    <td><div className="vehicle-cell"><button className="open-entry" type="button" onClick={() => onOpen(entry)}>Vehicle {entry.vehicleNumber}</button>{hasNote ? <NoteMark /> : null}</div></td>
+    <td><LinePill line={entry.savedLine} catalog={lineCatalog} /></td>
+    <td><span className="journey-cell"><strong>{direction}</strong>{entry.nearestStopName ? <small>{entry.nearestStopName}</small> : null}</span></td>
+    <td className="muted-cell"><time>{formatEntryDate(savedTimeForEntry(entry))}</time></td>
+  </tr>;
 }
 
-function MobileCard({ entry, lineCatalog, onOpen }: { entry: LocalEntry; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
-  return <button className="vehicle-card" type="button" onClick={() => onOpen(entry)} aria-label={`Open vehicle ${entry.vehicleNumber}, line ${entry.savedLine}, ${entry.savedLeg}, ${entry.nearestStopName}`}>
-    <span className="card-top"><strong>{entry.vehicleNumber}</strong><LinePill line={entry.savedLine} catalog={lineCatalog} /><time>{formatEntryDate(savedTimeForEntry(entry))}</time></span>
-    <span className="card-bottom"><b>{entry.savedLeg === "unclassified" ? "No direction" : entry.savedLeg}</b><span>{entry.nearestStopName || "No saved stop"}</span></span>
+function MobileCard({ entry, hasNote, lineCatalog, onOpen }: { entry: LocalEntry; hasNote: boolean; lineCatalog: Record<string, LineInfo>; onOpen: (entry: LocalEntry) => void }) {
+  const direction = entry.savedLeg === "unclassified" ? entry.nearestStopName || "No direction" : entry.savedLeg;
+  return <button className="vehicle-card" type="button" onClick={() => onOpen(entry)}>
+    <span className="card-top"><strong>{entry.vehicleNumber}</strong><LinePill line={entry.savedLine} catalog={lineCatalog} />{hasNote ? <NoteMark /> : null}<time>{formatEntryDate(savedTimeForEntry(entry))}</time></span>
+    <span className="card-bottom"><b>{direction}</b></span>
   </button>;
+}
+
+function NoteMark() {
+  return <span className="note-mark">Note</span>;
 }
 
 export function LinePill({ line, catalog }: { line: string; catalog: Record<string, LineInfo> }) {

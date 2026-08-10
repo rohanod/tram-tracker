@@ -225,12 +225,13 @@ export const DESIGN_SYSTEM_CSS = `
   --mut-radius-control: var(--control-radius-lg);
   --mut-radius-active: var(--control-radius-md);
 
-  --tracker-paper: #fbfaf8;
-  --tracker-ink: #0e0e0e;
-  --tracker-border: #d6d4c9;
-  --tracker-control-border: #d6d4cc;
-  --tracker-panel-border: #dbdad4;
-  --tracker-rule: #e4e2dd;
-  --tracker-row-hover: #f6f5f1;
+  --tracker-paper: oklch(98.2% 0.006 82);
+  --tracker-ink: oklch(17% 0.006 72);
+  --tracker-border: oklch(85.8% 0.011 82);
+  --tracker-rule: oklch(91.5% 0.008 82);
+  --tracker-row-hover: oklch(96.8% 0.006 82);
+  --tracker-radius-control: 10px;
+  --tracker-radius-panel: 14px;
+  --tracker-radius-modal: 16px;
 }
 `;

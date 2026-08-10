@@ -6,6 +6,7 @@ export const LEG_VALUES = ["unclassified", "from_home", "to_school", "from_schoo
 export const MAIN_LINE_VALUES = ["12", "14", "17", "18"];
 export const LINE_VALUES = ["unclassified", ...MAIN_LINE_VALUES];
 export const OBSERVATION_VALUES = ["been_on", "seen"];
+export const VEHICLE_NOTE_MAX_LENGTH = 2000;
 export let DIRECTION_OPTIONS_BY_LINE = {
   "12": ["Lancy-Bachet, Gare", "Thônex, Moillesulaz"],
   "14": ["Bernex, Vailly", "Meyrin, Gravière"],
@@ -49,6 +50,10 @@ export function isValidVehicleNumber(value) {
 export function normalizeVehicleNumber(value) {
   const clean = cleanVehicleNumber(value);
   return isValidVehicleNumber(clean) ? clean : "";
+}
+
+export function normalizeVehicleNote(value) {
+  return String(value ?? "").trim().slice(0, VEHICLE_NOTE_MAX_LENGTH);
 }
 
 export function isKnownLeg(value) {
@@ -98,7 +103,8 @@ export function vehicleHistoryMessage(entry) {
   return prefix + ": " + (capturedAt ? capturedAt + ", " : "") + trip + ".";
 }
 
-export function vehicleLookupHistory(entries) {
+export function vehicleLookupHistory(entries, vehicleNote = "") {
+  const note = normalizeVehicleNote(vehicleNote);
   const sorted = Array.isArray(entries)
     ? [...entries].sort((a, b) => String(b?.capturedAt ?? "").localeCompare(String(a?.capturedAt ?? "")))
     : [];
@@ -120,7 +126,7 @@ export function vehicleLookupHistory(entries) {
     duplicateCounts.set(baseLabel, duplicate);
     const label = duplicate === 1 ? baseLabel : baseLabel + " (" + duplicate + ")";
     labels.push(label);
-    details[label] = vehicleLookupDetail(entry, typeLabel, capturedAt);
+    details[label] = vehicleLookupDetail(entry, typeLabel, capturedAt, note);
   }
 
   return {
@@ -372,7 +378,7 @@ function lineLabelForMessage(line) {
   return line === "unclassified" ? LINE_LABELS.unclassified : "Line " + line;
 }
 
-function vehicleLookupDetail(entry, typeLabel, capturedAt) {
+function vehicleLookupDetail(entry, typeLabel, capturedAt, vehicleNote) {
   const line = normalizeLine(entry?.savedLine ?? entry?.line);
   const direction = normalizeDirection(entry?.savedDirection ?? entry?.direction ?? entry?.savedLeg ?? entry?.leg, line);
   const detail = [
@@ -387,6 +393,7 @@ function vehicleLookupDetail(entry, typeLabel, capturedAt) {
   const distanceMeters = String(entry?.distanceMeters ?? "").trim();
   if (lat && lon) detail.push("Coordinates: " + lat + ", " + lon);
   if (distanceMeters) detail.push("Distance to route: " + distanceMeters + " m");
+  if (vehicleNote) detail.push("Vehicle note: " + vehicleNote);
   return detail.join("\n");
 }
 

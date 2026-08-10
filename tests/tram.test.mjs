@@ -61,6 +61,15 @@ test("auth uses immutable identity and offline cache only while offline", async 
   assert.equal(canUseTracker({ isLocalGuest: false, isAllowed: false, isOnline: false, priorAuthorized: true, cachedAccessAllowed: true }), true);
 });
 
+test("vehicle notes trim and enforce the shared length limit", async () => {
+  const { normalizeVehicleNote, VEHICLE_NOTE_MAX_LENGTH } = await loadSharedModule();
+
+  assert.equal(VEHICLE_NOTE_MAX_LENGTH, 2000);
+  assert.equal(normalizeVehicleNote("  Needs inspection  "), "Needs inspection");
+  assert.equal(normalizeVehicleNote("   "), "");
+  assert.equal(normalizeVehicleNote("a".repeat(2001)).length, 2000);
+});
+
 test("vehicle numbers and directions normalize", async () => {
   const { cleanVehicleNumber, directionOptionsForLine, headsignForLineAndLeg, isValidVehicleNumber, legLabelForLine, normalizeDirection, normalizeLine, normalizeObservationType, vehicleHistoryMessage } = await loadSharedModule();
 
@@ -129,6 +138,9 @@ test("vehicle lookup history lists every instance with counts and details", asyn
     history.details["17 Jun 2026 at 08:30 — Seen"],
     "Seen\n17 Jun 2026 at 08:30\nLine 14\nTo Bernex, Vailly\nNearest stop: Genève, Cornavin\nCoordinates: 46.2100, 6.1420\nDistance to route: 18 m"
   );
+
+  const withNote = vehicleLookupHistory([{ capturedAt: "2026-06-17T06:30:00.000Z", observationType: "seen", savedLine: "14" }], "  Watch the rear door alignment.  ");
+  assert.match(withNote.details[withNote.entries[0]], /Vehicle note: Watch the rear door alignment\.$/);
 });
 
 test("vehicle lookup history keeps same-minute instances selectable", async () => {
@@ -226,6 +238,32 @@ test("server not_found means a pending delete is already settled", async () => {
   assert.equal(isDeleteSettledResult({ ok: true }), true);
   assert.equal(isDeleteSettledResult({ ok: false, reason: "not_found" }), true);
   assert.equal(isDeleteSettledResult({ ok: false, reason: "unauthorized" }), false);
+});
+
+test("transit cleanup keeps stale keys and never deletes active files", async () => {
+  const { collectTransitCleanupKeys, parseCleanupKeys } = await loadSyncModule();
+  const rows = [
+    { metadataKey: "public/old-meta", geometryKey: "public/old-geometry", pendingDeleteKeys: '["public/retry","public/old-meta"]' },
+    { metadataKey: "public/current-meta", geometryKey: "public/other-geometry", pendingDeleteKeys: "invalid" },
+    { metadataKey: "public/current-meta", geometryKey: "public/current-geometry", pendingDeleteKeys: '["public/current-geometry"]' }
+  ];
+
+  assert.deepEqual(collectTransitCleanupKeys(rows, ["public/current-meta", "public/current-geometry"]), [
+    "public/retry",
+    "public/old-meta",
+    "public/old-geometry",
+    "public/other-geometry"
+  ]);
+  assert.deepEqual(parseCleanupKeys('["public/a","public/a"," public/b "]'), ["public/a", "public/b"]);
+  assert.deepEqual(parseCleanupKeys("not-json"), []);
+});
+
+test("stop index remains inside Lakebed's encoded string limit", async () => {
+  const { utf8ByteLength } = await loadSyncModule();
+  const payload = await readFile(new URL("../storage-data/tpg-stops.compact.json", import.meta.url), "utf8");
+
+  assert.equal(utf8ByteLength("é"), 2);
+  assert.ok(utf8ByteLength(JSON.stringify(payload)) <= 65_536);
 });
 
 test("recent Trip Entries returns only the two newest captures", async () => {
