@@ -66,7 +66,7 @@ export default capsule({
       geometryKey: string(),
       geometryUrl: string(),
       geometrySize: string(),
-      pendingDeleteKeys: string()
+      pendingDeleteKeys: string().default("[]")
     }).index("by_owner", ["ownerId"]),
     transitStopIndexes: table({
       ownerId: string(),
