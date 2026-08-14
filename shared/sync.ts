@@ -11,13 +11,16 @@ export function parseCleanupKeys(value) {
   }
 }
 
-export function collectTransitCleanupKeys(rows, activeKeys) {
+export function collectTransitCleanupKeys(rows, activeKeys, additionalKeys = []) {
   const active = new Set(parseCleanupKeys(activeKeys));
-  const stale = rows.flatMap((row) => [
-    ...parseCleanupKeys(row?.pendingDeleteKeys),
-    String(row?.metadataKey ?? "").trim(),
-    String(row?.geometryKey ?? "").trim()
-  ]);
+  const stale = [
+    ...parseCleanupKeys(additionalKeys),
+    ...rows.flatMap((row) => [
+      ...parseCleanupKeys(row?.pendingDeleteKeys),
+      String(row?.metadataKey ?? "").trim(),
+      String(row?.geometryKey ?? "").trim()
+    ])
+  ];
   return [...new Set(stale.filter((key) => key && !active.has(key)))];
 }
 

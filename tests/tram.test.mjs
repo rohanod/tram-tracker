@@ -248,7 +248,8 @@ test("transit cleanup keeps stale keys and never deletes active files", async ()
     { metadataKey: "public/current-meta", geometryKey: "public/current-geometry", pendingDeleteKeys: '["public/current-geometry"]' }
   ];
 
-  assert.deepEqual(collectTransitCleanupKeys(rows, ["public/current-meta", "public/current-geometry"]), [
+  assert.deepEqual(collectTransitCleanupKeys(rows, ["public/current-meta", "public/current-geometry"], ["public/recovered", "public/current-meta"]), [
+    "public/recovered",
     "public/retry",
     "public/old-meta",
     "public/old-geometry",
@@ -258,12 +259,27 @@ test("transit cleanup keeps stale keys and never deletes active files", async ()
   assert.deepEqual(parseCleanupKeys("not-json"), []);
 });
 
-test("stop index remains inside Lakebed's encoded string limit", async () => {
+test("compact stop payload fits inside a conservative activation frame budget", async () => {
   const { utf8ByteLength } = await loadSyncModule();
-  const payload = await readFile(new URL("../storage-data/tpg-stops.compact.json", import.meta.url), "utf8");
+  const source = JSON.parse(await readFile(new URL("../storage-data/tpg-stops.compact.json", import.meta.url), "utf8"));
+  const stopsPayload = JSON.stringify({ stops: source.s.map((stop) => ({ n: stop[2], a: stop[3], o: stop[4] })) });
+  const key = "public/" + "x".repeat(64);
+  const input = {
+    version: "v".repeat(80),
+    metadataKey: key,
+    metadataUrl: "https://rapid-signal-1f4a040df6.lakebed.app/storage/" + key,
+    metadataSize: 5 * 1024 * 1024,
+    geometryKey: key,
+    geometryUrl: "https://rapid-signal-1f4a040df6.lakebed.app/storage/" + key,
+    geometrySize: 5 * 1024 * 1024,
+    stopsPayload,
+    supersededKeys: Array.from({ length: 24 }, (_, index) => `public/${index}-${"x".repeat(64)}`)
+  };
+  const frame = JSON.stringify({ id: 1, op: "mutation.run", name: "activateTransitData", args: [input] });
 
   assert.equal(utf8ByteLength("é"), 2);
-  assert.ok(utf8ByteLength(JSON.stringify(payload)) <= 65_536);
+  assert.ok(utf8ByteLength(stopsPayload) < 50 * 1024);
+  assert.ok(utf8ByteLength(frame) < 60 * 1024);
 });
 
 test("recent Trip Entries returns only the two newest captures", async () => {

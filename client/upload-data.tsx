@@ -5,8 +5,12 @@ import { validateTransitPayloads } from "./transit-data";
 import { AuthGate } from "./ui";
 import type { TransitDataConfig, Viewer } from "./types";
 
+const ACTIVATION_FRAME_LIMIT = 60 * 1024;
+const RECOVERY_KEY_PREFIX = "tram-transit-upload-recovery-v1";
+
 type TransitDataUploadInput = Omit<TransitDataConfig, "cleanupKeys"> & {
   stopsPayload: string;
+  supersededKeys: string[];
 };
 type ActivationResult = {
   ok: boolean;
@@ -15,7 +19,6 @@ type ActivationResult = {
 };
 type CleanupResult = { ok: boolean; reason?: string; cleanupKeys?: string[] };
 type StoredFile = { key: string; url: string; size: number };
-type PendingActivation = { metadata: StoredFile; geometry: StoredFile; input: TransitDataUploadInput };
 
 export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized, current }: {
   authLoading: boolean;
@@ -29,7 +32,7 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
   const [metadata, setMetadata] = useState<File | null>(null);
   const [geometry, setGeometry] = useState<File | null>(null);
   const [stops, setStops] = useState<File | null>(null);
-  const [pendingActivation, setPendingActivation] = useState<PendingActivation | null>(null);
+  const [inputKey, setInputKey] = useState(0);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const cleanupInFlight = useRef(false);
@@ -44,66 +47,62 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
   if (!viewer?.isAllowed) return <AuthGate authLoading={authLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} />;
 
   async function upload() {
-    if (!pendingActivation && (!metadata || !geometry || !stops)) return;
+    if (!metadata || !geometry || !stops) return;
     setBusy(true);
-    let prepared = pendingActivation;
+    let uploadedMetadata: StoredFile | null = null;
+    let uploadedGeometry: StoredFile | null = null;
     let activationDispatched = false;
     let explicitRejection = false;
     try {
-      if (!prepared) {
-        setStatus("Validating files…");
-        const metadataJson = JSON.parse(await metadata!.text());
-        const geometryJson = JSON.parse(await geometry!.text());
-        const stopsJson = JSON.parse(await stops!.text());
-        const stopsPayload = JSON.stringify(stopsJson);
-        validateTransitFiles(metadataJson, geometryJson, stopsJson, metadata!.size, geometry!.size, stops!.size, stopsPayload);
-        setStatus("Uploading metadata…");
-        const uploadedMetadata = await storage.upload(metadata!, { public: true });
-        try {
-          setStatus("Uploading geometry…");
-          const uploadedGeometry = await storage.upload(geometry!, { public: true });
-          prepared = {
-            metadata: uploadedMetadata,
-            geometry: uploadedGeometry,
-            input: {
-              version: `${String(metadataJson.generatedAt || "data")}-${Date.now()}`,
-              metadataKey: uploadedMetadata.key,
-              metadataUrl: uploadedMetadata.url,
-              metadataSize: uploadedMetadata.size,
-              geometryKey: uploadedGeometry.key,
-              geometryUrl: uploadedGeometry.url,
-              geometrySize: uploadedGeometry.size,
-              stopsPayload
-            }
-          };
-          setPendingActivation(prepared);
-        } catch (error) {
-          await storage.delete(uploadedMetadata.key).catch(() => undefined);
-          throw error;
-        }
-      }
+      setStatus("Validating files…");
+      const metadataJson = JSON.parse(await metadata.text());
+      const geometryJson = JSON.parse(await geometry.text());
+      const stopsJson = JSON.parse(await stops.text());
+      const stopsPayload = validateTransitFiles(metadataJson, geometryJson, stopsJson, metadata.size, geometry.size, stops.size);
+
+      setStatus("Uploading metadata…");
+      uploadedMetadata = await storage.upload(metadata, { public: true });
+      addRecoveryKeys(viewer.userId, [uploadedMetadata.key]);
+      setStatus("Uploading geometry…");
+      uploadedGeometry = await storage.upload(geometry, { public: true });
+      addRecoveryKeys(viewer.userId, [uploadedGeometry.key]);
+
+      const input = {
+        version: `${String(metadataJson.generatedAt || "data")}-${Date.now()}`,
+        metadataKey: uploadedMetadata.key,
+        metadataUrl: uploadedMetadata.url,
+        metadataSize: uploadedMetadata.size,
+        geometryKey: uploadedGeometry.key,
+        geometryUrl: uploadedGeometry.url,
+        geometrySize: uploadedGeometry.size,
+        stopsPayload,
+        supersededKeys: readRecoveryKeys(viewer.userId)
+      };
+      if (activationFrameBytes(input) > ACTIVATION_FRAME_LIMIT) throw new Error("Transit activation request is too large.");
 
       setStatus("Activating transit data…");
       activationDispatched = true;
-      const result = await activate(prepared.input);
+      const result = await activate(input);
       if (!result.ok || !result.current) {
         explicitRejection = true;
         throw new Error(result.reason || "Activation failed");
       }
 
-      setPendingActivation(null);
+      clearRecoveryKeys(viewer.userId);
       setMetadata(null);
       setGeometry(null);
       setStops(null);
+      setInputKey((value) => value + 1);
       const remaining = await cleanupStaleFiles(result.current);
       setStatus(remaining ? `Transit data active. ${remaining} old file${remaining === 1 ? "" : "s"} will be retried.` : "Transit data active. Old transit data deleted.");
     } catch (error) {
-      if (prepared && (!activationDispatched || explicitRejection)) {
-        await Promise.allSettled([storage.delete(prepared.metadata.key), storage.delete(prepared.geometry.key)]);
-        setPendingActivation(null);
+      if (!activationDispatched || explicitRejection) {
+        const keys = [uploadedMetadata?.key, uploadedGeometry?.key].filter(Boolean) as string[];
+        await Promise.allSettled(keys.map((key) => storage.delete(key)));
+        removeRecoveryKeys(viewer.userId, keys);
       }
       setStatus(activationDispatched && !explicitRejection
-        ? "Connection interrupted. The uploaded files were kept; retry activation instead of uploading them again."
+        ? "Connection interrupted. Files remain selected; upload again to start a new attempt."
         : error instanceof Error ? error.message : "Upload failed");
     } finally {
       setBusy(false);
@@ -139,31 +138,26 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
     }
   }
 
-  function replaceMetadata(file: File | null) { setMetadata(file); }
-  function replaceGeometry(file: File | null) { setGeometry(file); }
-  function replaceStops(file: File | null) { setStops(file); }
-
   return <main className="upload-page"><section className="upload-panel">
     <a className="back-link" href="/">← Vehicle Tracker</a>
     <h1>Upload transit data</h1>
     <p>Private maintenance page. Upload line info, geometry, and the compact stop index together.</p>
     {current ? <p className="current-data">Active version: <code>{current.version}</code></p> : <p className="current-data">No active transit data.</p>}
-    <label className="file-field"><span>Line info JSON</span><input type="file" disabled={busy || Boolean(pendingActivation)} accept="application/json,.json,.info.json" onChange={(event) => replaceMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
-    <label className="file-field"><span>Line geometry</span><input type="file" disabled={busy || Boolean(pendingActivation)} accept="application/json,.json,.geojson,.polyline.json" onChange={(event) => replaceGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
-    <label className="file-field"><span>Stop index</span><input type="file" disabled={busy || Boolean(pendingActivation)} accept="application/json,.json,.stops.json" onChange={(event) => replaceStops(event.currentTarget.files?.[0] ?? null)} /></label>
-    <button className="button primary" type="button" disabled={busy || (!pendingActivation && (!metadata || !geometry || !stops))} onClick={() => void upload()}>{busy ? "Working…" : pendingActivation ? "Retry activation" : "Upload and activate"}</button>
+    <label className="file-field"><span>Line info JSON</span><input key={`metadata-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.info.json" onChange={(event) => setMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Line geometry</span><input key={`geometry-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.geojson,.polyline.json" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Stop index</span><input key={`stops-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.stops.json" onChange={(event) => setStops(event.currentTarget.files?.[0] ?? null)} /></label>
+    <button className="button primary" type="button" disabled={busy || !metadata || !geometry || !stops} onClick={() => void upload()}>{busy ? "Working…" : "Upload and activate"}</button>
     <p className="upload-status" role="status">{status}</p>
   </section></main>;
 }
 
-function validateTransitFiles(metadata: any, geometry: any, stops: any, metadataSize: number, geometrySize: number, stopsSize: number, stopsPayload: string) {
+function validateTransitFiles(metadata: any, geometry: any, stops: any, metadataSize: number, geometrySize: number, stopsSize: number) {
   const max = 5 * 1024 * 1024;
   if (metadataSize > max || geometrySize > max || stopsSize > max) throw new Error("Each file must be 5 MiB or smaller.");
-  if (utf8ByteLength(JSON.stringify(stopsPayload)) > 65_536) throw new Error("Stop index is too large for Lakebed.");
   validateTransitPayloads(metadata, geometry);
   if (stops?.v !== 1 || !Array.isArray(stops?.s) || !stops.s.length) throw new Error("Invalid stop index.");
   const ids = new Set();
-  for (const stop of stops.s) {
+  const compactStops = stops.s.map((stop) => {
     const id = String(stop?.[0] ?? "").trim();
     const name = String(stop?.[2] ?? "").trim();
     const lat = Number(stop?.[3]);
@@ -172,5 +166,54 @@ function validateTransitFiles(metadata: any, geometry: any, stops: any, metadata
       throw new Error("Invalid stop index.");
     }
     ids.add(id);
+    return { n: name, a: lat, o: lon };
+  });
+  return JSON.stringify({ stops: compactStops });
+}
+
+function activationFrameBytes(input: TransitDataUploadInput) {
+  return utf8ByteLength(JSON.stringify({ id: 1, op: "mutation.run", name: "activateTransitData", args: [input] }));
+}
+
+function recoveryStorageKey(userId: string) {
+  return `${RECOVERY_KEY_PREFIX}:${encodeURIComponent(userId)}`;
+}
+
+function normalizeRecoveryKeys(value: unknown) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((key) => String(key ?? "").trim()).filter((key) => /^public\/[A-Za-z0-9_-]+$/.test(key)))].slice(0, 24)
+    : [];
+}
+
+function readRecoveryKeys(userId: string) {
+  try {
+    return normalizeRecoveryKeys(JSON.parse(localStorage.getItem(recoveryStorageKey(userId)) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function writeRecoveryKeys(userId: string, keys: string[]) {
+  try {
+    localStorage.setItem(recoveryStorageKey(userId), JSON.stringify(normalizeRecoveryKeys(keys)));
+  } catch {
+    // ponytail: recovery is best-effort; the server ledger handles confirmed activations.
+  }
+}
+
+function addRecoveryKeys(userId: string, keys: string[]) {
+  writeRecoveryKeys(userId, [...keys, ...readRecoveryKeys(userId)]);
+}
+
+function removeRecoveryKeys(userId: string, keys: string[]) {
+  const removed = new Set(keys);
+  writeRecoveryKeys(userId, readRecoveryKeys(userId).filter((key) => !removed.has(key)));
+}
+
+function clearRecoveryKeys(userId: string) {
+  try {
+    localStorage.removeItem(recoveryStorageKey(userId));
+  } catch {
+    // ponytail: recovery is best-effort; the server ledger handles confirmed activations.
   }
 }

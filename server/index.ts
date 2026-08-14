@@ -259,7 +259,8 @@ export default capsule({
       const ownerId = primaryOwnerIdFor(ctx, viewer);
       const existing = await rowsForOwners(ctx.db.transitData, [ownerId]);
       const existingStopIndexes = await rowsForOwners(ctx.db.transitStopIndexes, [ownerId]);
-      const pendingDeleteKeys = collectTransitCleanupKeys(existing, [next.metadataKey, next.geometryKey]).map(cleanStorageKey).filter(Boolean);
+      const supersededKeys = cleanTransitStorageKeys(input?.supersededKeys);
+      const pendingDeleteKeys = collectTransitCleanupKeys(existing, [next.metadataKey, next.geometryKey], supersededKeys).map(cleanStorageKey).filter(Boolean);
 
       for (const row of existing) await ctx.db.transitData.delete(row.id);
       for (const row of existingStopIndexes) await ctx.db.transitStopIndexes.delete(row.id);
@@ -514,20 +515,22 @@ function normalizeTransitDataInput(input) {
 
 function normalizeTransitStopIndexPayload(value) {
   const payload = String(value ?? "");
-  if (!payload || utf8ByteLength(JSON.stringify(payload)) > 65_536) return "";
+  if (!payload || utf8ByteLength(payload) > 65_536) return "";
   try {
     const parsed = JSON.parse(payload);
-    if (parsed?.v !== 1 || !Array.isArray(parsed?.s) || !parsed.s.length) return "";
+    const tupleStops = parsed?.v === 1 && Array.isArray(parsed?.s) ? parsed.s : null;
+    const compactStops = Array.isArray(parsed?.stops) ? parsed.stops : null;
+    if (!tupleStops?.length && !compactStops?.length) return "";
+
     const ids = new Set();
-    for (const stop of parsed.s) {
-      const id = String(stop?.[0] ?? "").trim();
-      const name = String(stop?.[2] ?? "").trim();
-      const lat = Number(stop?.[3]);
-      const lon = Number(stop?.[4]);
+    for (const stop of tupleStops ?? compactStops) {
+      const id = tupleStops ? String(stop?.[0] ?? "").trim() : "";
+      const name = String(tupleStops ? stop?.[2] : stop?.n).trim();
+      const lat = Number(tupleStops ? stop?.[3] : stop?.a);
+      const lon = Number(tupleStops ? stop?.[4] : stop?.o);
       if (
-        !id ||
         !name ||
-        ids.has(id) ||
+        (tupleStops && (!id || ids.has(id))) ||
         !Number.isFinite(lat) ||
         lat < -90 ||
         lat > 90 ||
@@ -535,7 +538,7 @@ function normalizeTransitStopIndexPayload(value) {
         lon < -180 ||
         lon > 180
       ) return "";
-      ids.add(id);
+      if (id) ids.add(id);
     }
     return payload;
   } catch {
@@ -546,6 +549,10 @@ function normalizeTransitStopIndexPayload(value) {
 function cleanStorageKey(value) {
   const key = cleanBounded(value, 160);
   return /^public\/[A-Za-z0-9_-]+$/.test(key) ? key : "";
+}
+
+function cleanTransitStorageKeys(value) {
+  return Array.isArray(value) ? [...new Set(value.map(cleanStorageKey).filter(Boolean))].slice(0, 24) : [];
 }
 
 function cleanStorageUrl(value, key) {
