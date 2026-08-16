@@ -1,6 +1,6 @@
 import { capsule, endpoint, json, mutation, query, string, table, text } from "lakebed/server";
+import bundledStopIndex from "../storage-data/tpg-stops.compact.json";
 import { configuredUserId, isAllowedIdentity, legacyOwnerId } from "../shared/auth";
-import { collectTransitCleanupKeys, parseCleanupKeys, utf8ByteLength } from "../shared/sync";
 import {
   classifyCapture,
   isValidVehicleNumber,
@@ -16,9 +16,11 @@ import {
   vehicleHistoryMessage,
   vehicleLookupHistory
 } from "../shared/tram";
+import { TRANSIT_DATA_GZIP_BASE64, TRANSIT_DATA_VERSION } from "./transit-data.generated";
 
 const APP_NAME = "tram-tracker";
 const DEFAULT_LINES = ["14", "18", "12", "17"];
+const BUNDLED_TRANSIT_STOPS = transitStopsFromMetadata(bundledStopIndex);
 
 export default capsule({
   name: APP_NAME,
@@ -107,13 +109,6 @@ export default capsule({
       if (!viewer.isAllowed) return { defaultLines: DEFAULT_LINES };
       const row = await firstForOwners(ctx.db.userSettings, [primaryOwnerIdFor(ctx, viewer)]);
       return { defaultLines: parseDefaultLines(row?.defaultLines) };
-    }),
-
-    transitData: query(async (ctx) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) return null;
-      const row = await firstForOwners(ctx.db.transitData, [primaryOwnerIdFor(ctx, viewer)]);
-      return row ? transitDataResponse(row) : null;
     })
   },
 
@@ -248,38 +243,6 @@ export default capsule({
         await ctx.db.userSettings.insert({ ownerId, defaultLines: JSON.stringify(defaultLines) });
       }
       return { ok: true, defaultLines };
-    }),
-
-    activateTransitData: mutation(async (ctx, input) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
-      const next = normalizeTransitDataInput(input);
-      const stopIndexPayload = normalizeTransitStopIndexPayload(input?.stopsPayload);
-      if (!next || !stopIndexPayload) return { ok: false, reason: "invalid_transit_data" };
-      const ownerId = primaryOwnerIdFor(ctx, viewer);
-      const existing = await rowsForOwners(ctx.db.transitData, [ownerId]);
-      const existingStopIndexes = await rowsForOwners(ctx.db.transitStopIndexes, [ownerId]);
-      const supersededKeys = cleanTransitStorageKeys(input?.supersededKeys);
-      const pendingDeleteKeys = collectTransitCleanupKeys(existing, [next.metadataKey, next.geometryKey], supersededKeys).map(cleanStorageKey).filter(Boolean);
-
-      for (const row of existing) await ctx.db.transitData.delete(row.id);
-      for (const row of existingStopIndexes) await ctx.db.transitStopIndexes.delete(row.id);
-      await ctx.db.transitData.insert({ ownerId, ...next, pendingDeleteKeys: JSON.stringify(pendingDeleteKeys) });
-      await ctx.db.transitStopIndexes.insert({ ownerId, version: next.version, payload: stopIndexPayload });
-      return { ok: true, current: { ...next, cleanupKeys: pendingDeleteKeys } };
-    }),
-
-    acknowledgeTransitCleanup: mutation(async (ctx, input) => {
-      const viewer = viewerFor(ctx);
-      if (!viewer.isAllowed) return { ok: false, reason: "unauthorized" };
-      const ownerId = primaryOwnerIdFor(ctx, viewer);
-      const current = await firstForOwners(ctx.db.transitData, [ownerId]);
-      const version = cleanBounded(input?.version, 80);
-      if (!current || current.version !== version) return { ok: false, reason: "stale_transit_data" };
-      const deleted = new Set(parseCleanupKeys(input?.keys).map(cleanStorageKey).filter(Boolean));
-      const pendingDeleteKeys = parseCleanupKeys(current.pendingDeleteKeys).filter((key) => !deleted.has(key));
-      await ctx.db.transitData.update(current.id, { pendingDeleteKeys: JSON.stringify(pendingDeleteKeys) });
-      return { ok: true, cleanupKeys: pendingDeleteKeys };
     })
   },
 
@@ -307,6 +270,17 @@ export default capsule({
         headers: {
           "Content-Type": "image/svg+xml; charset=utf-8",
           "Cache-Control": "public, max-age=86400"
+        }
+      })
+    ),
+
+    transitDataBundle: endpoint({ method: "GET", path: "/api/transit-data" }, () =>
+      text(TRANSIT_DATA_GZIP_BASE64, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "ETag": `"${TRANSIT_DATA_VERSION}"`,
+          "X-Transit-Version": TRANSIT_DATA_VERSION
         }
       })
     ),
@@ -501,89 +475,6 @@ function normalizeDefaultLines(value) {
   return lines;
 }
 
-function normalizeTransitDataInput(input) {
-  const version = cleanBounded(input?.version, 80);
-  const metadataKey = cleanStorageKey(input?.metadataKey);
-  const metadataUrl = cleanStorageUrl(input?.metadataUrl, metadataKey);
-  const geometryKey = cleanStorageKey(input?.geometryKey);
-  const geometryUrl = cleanStorageUrl(input?.geometryUrl, geometryKey);
-  const metadataSize = cleanSize(input?.metadataSize);
-  const geometrySize = cleanSize(input?.geometrySize);
-  if (!version || !metadataKey || !metadataUrl || !geometryKey || !geometryUrl || !metadataSize || !geometrySize) return null;
-  return { version, metadataKey, metadataUrl, metadataSize, geometryKey, geometryUrl, geometrySize };
-}
-
-function normalizeTransitStopIndexPayload(value) {
-  const payload = String(value ?? "");
-  if (!payload || utf8ByteLength(payload) > 65_536) return "";
-  try {
-    const parsed = JSON.parse(payload);
-    const tupleStops = parsed?.v === 1 && Array.isArray(parsed?.s) ? parsed.s : null;
-    const compactStops = Array.isArray(parsed?.stops) ? parsed.stops : null;
-    if (!tupleStops?.length && !compactStops?.length) return "";
-
-    const ids = new Set();
-    for (const stop of tupleStops ?? compactStops) {
-      const id = tupleStops ? String(stop?.[0] ?? "").trim() : "";
-      const name = String(tupleStops ? stop?.[2] : stop?.n).trim();
-      const lat = Number(tupleStops ? stop?.[3] : stop?.a);
-      const lon = Number(tupleStops ? stop?.[4] : stop?.o);
-      if (
-        !name ||
-        (tupleStops && (!id || ids.has(id))) ||
-        !Number.isFinite(lat) ||
-        lat < -90 ||
-        lat > 90 ||
-        !Number.isFinite(lon) ||
-        lon < -180 ||
-        lon > 180
-      ) return "";
-      if (id) ids.add(id);
-    }
-    return payload;
-  } catch {
-    return "";
-  }
-}
-
-function cleanStorageKey(value) {
-  const key = cleanBounded(value, 160);
-  return /^public\/[A-Za-z0-9_-]+$/.test(key) ? key : "";
-}
-
-function cleanTransitStorageKeys(value) {
-  return Array.isArray(value) ? [...new Set(value.map(cleanStorageKey).filter(Boolean))].slice(0, 24) : [];
-}
-
-function cleanStorageUrl(value, key) {
-  const url = cleanBounded(value, 500);
-  try {
-    const parsed = new URL(url);
-    const localHttp = parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
-    return (parsed.protocol === "https:" || localHttp) && parsed.pathname === "/storage/" + key ? url : "";
-  } catch {
-    return "";
-  }
-}
-
-function cleanSize(value) {
-  const size = Number(value);
-  return Number.isInteger(size) && size > 0 && size <= 5 * 1024 * 1024 ? String(size) : "";
-}
-
-function transitDataResponse(row) {
-  return {
-    version: String(row.version ?? ""),
-    metadataKey: String(row.metadataKey ?? ""),
-    metadataUrl: String(row.metadataUrl ?? ""),
-    metadataSize: Number(row.metadataSize ?? 0),
-    geometryKey: String(row.geometryKey ?? ""),
-    geometryUrl: String(row.geometryUrl ?? ""),
-    geometrySize: Number(row.geometrySize ?? 0),
-    cleanupKeys: parseCleanupKeys(row.pendingDeleteKeys)
-  };
-}
-
 function prepareEntryRow(ctx, input, ownerId) {
   const vehicleNumber = normalizeVehicleNumber(input?.vehicleNumber ?? input?.vehicle ?? input?.number);
   if (!isValidVehicleNumber(vehicleNumber)) {
@@ -712,23 +603,8 @@ async function nearestShortcutStops(ctx, req) {
     return json({ ok: false, reason: "invalid_location", stops: [] }, jsonOptions(400));
   }
 
-  const ownerId = ownerKeyFor(ctx);
-  if (!ownerId) {
-    return json({ ok: false, reason: "allowed_user_id_missing", stops: [] }, jsonOptions(503));
-  }
-
-  const stopIndex = await firstForOwners(ctx.db.transitStopIndexes, [ownerId]);
-  if (!stopIndex?.payload) {
-    return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
-  }
-
-  try {
-    const stops = transitStopsFromMetadata(JSON.parse(stopIndex.payload));
-    const nearest = nearestTransitStops(location, stops, 5).map((stop) => stop.name);
-    return json({ ok: true, stops: [...nearest, "Other"], dataAvailable: Boolean(nearest.length) }, jsonOptions(200));
-  } catch {
-    return json({ ok: true, stops: ["Other"], dataAvailable: false }, jsonOptions(200));
-  }
+  const nearest = nearestTransitStops(location, BUNDLED_TRANSIT_STOPS, 5).map((stop) => stop.name);
+  return json({ ok: true, stops: [...nearest, "Other"], dataAvailable: Boolean(nearest.length) }, jsonOptions(200));
 }
 
 function shortcutAuthorization(ctx, req) {

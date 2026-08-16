@@ -7,7 +7,7 @@ Your role is to build software within this capsule. Lakebed is the runtime, the 
 ## Hard rules
 
 - No installing node modules. You can use the built-in APIs. Write TypeScript for anything that is not included.
-- Do not run `npx lakebed dev` or `npx lakebed deploy` directly from the repository root. Use `npm run dev` and `npm run deploy`; these wrappers invoke Lakebed with clean staged capsules that exclude Git metadata and local artifacts. Use `npx lakebed [command]` for other Lakebed CLI commands.
+- Do not run `npx lakebed dev` or `npx lakebed deploy` directly from the repository root. Use `bun run dev` and `bun run deploy`; these wrappers invoke Lakebed with clean staged capsules and canonical transit data. Use `npx lakebed [command]` for other Lakebed CLI commands.
 - All client code goes in the `client` directory, and all server code goes in the `server` directory. Shared code can go in `shared`.
 - Use `lakebed/server` only from `server/*.ts`.
 - Use `lakebed/client` only from `client/*.tsx`.
@@ -21,7 +21,7 @@ Your role is to build software within this capsule. Lakebed is the runtime, the 
 - Read server-only environment variables through `ctx.env`; define them in `.env.lakebed.server`.
 - Auth can be added with a Google sign-in using `<SignInWithGoogle />` or `signInWithGoogle()` from `lakebed/client`.
 - Keep `shared/` free of DOM, Node, env, and Lakebed runtime imports.
-- Environment variables are only available on the server, and must be defined in `.env.lakebed.server`. They are not available during build time. If you need build-time environment variables, define them in code and do conditional logic based on them. They will be synced with production by `npm run deploy`.
+- Environment variables are only available on the server, and must be defined in `.env.lakebed.server`. They are not available during build time. If you need build-time environment variables, define them in code and do conditional logic based on them. They will be synced with production by `bun run deploy`.
 
 ## Default project structure
 
@@ -34,18 +34,18 @@ Your role is to build software within this capsule. Lakebed is the runtime, the 
 Run locally through the clean development mirror:
 
 ```sh
-npm run dev
+bun run dev
 ```
 
 Deploy through the compact staged capsule:
 
 ```sh
-npm run deploy
+bun run deploy
 ```
 
-The wrappers exclude `.git`, `.lakebed`, audit output, and other repository-only files that can trigger rebuilds or exceed Lakebed's deployment request limit.
+The wrappers exclude `.git`, `.lakebed`, audit output, and other repository-only files that can trigger rebuilds or exceed Lakebed's deployment request limit. Both read only `tpg-lines.info.json`, `tpg-routes.polyline.json`, and `tpg-stops.compact.json` from `/Users/rohan/Documents/tpg-line-data/out-data`; never stage `tpg-routes.geojson`. Dev copies these locally. Deploy compacts and gzips them into the staged capsule, with no browser upload flow or Lakebed Storage dependency.
 
-Inspect local state while `npm run dev` is running:
+Inspect local state while `bun run dev` is running:
 
 ```sh
 npx lakebed db list --port 3000
@@ -70,5 +70,5 @@ Use `endpoint({ method, path }, handler)` from `lakebed/server` when the app nee
 - No file storage.
 - No outbound fetch in anonymous deploys. Claim the deploy before using server-side fetch.
 - Non-empty `.env.lakebed.server` files sync only after a deploy is claimed.
-- Local state resets when `npm run dev` restarts.
+- Local state resets when `bun run dev` restarts.
 - All production deploys are on 'lakebed.app'

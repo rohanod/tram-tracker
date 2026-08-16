@@ -2,10 +2,11 @@ import { spawn } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageTransitData, TRANSIT_FILES, TRANSIT_SOURCE_DIR } from "./transit-data-source.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const devRoot = join(root, ".lakebed", "dev-capsule");
-const sourceEntries = ["client", "server", "shared", "storage-data", "lakebed.json", ".env.lakebed.server"];
+const sourceEntries = ["client", "server", "shared", "lakebed.json", ".env.lakebed.server"];
 const ignoredNames = new Set([".DS_Store", ".git", ".lakebed", "node_modules"]);
 
 let lastFingerprint = "";
@@ -69,6 +70,7 @@ async function mirrorSources({ reset }) {
   for (const entry of sourceEntries) {
     await copyEntry(join(root, entry), join(devRoot, entry));
   }
+  await stageTransitData(devRoot, { fullClientData: true });
 }
 
 async function copyEntry(sourcePath, targetPath) {
@@ -118,6 +120,9 @@ async function sourceFingerprint() {
   const parts = [];
   for (const entry of sourceEntries) {
     await fingerprintEntry(join(root, entry), parts);
+  }
+  for (const name of Object.values(TRANSIT_FILES)) {
+    await fingerprintEntry(join(TRANSIT_SOURCE_DIR, name), parts);
   }
   return parts.sort().join("\n");
 }

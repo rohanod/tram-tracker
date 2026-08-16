@@ -134,17 +134,6 @@ export type LineInfo = {
 
 export type UserSettings = { defaultLines: string[] };
 
-export type TransitDataConfig = {
-  version: string;
-  metadataKey: string;
-  metadataUrl: string;
-  metadataSize: number;
-  geometryKey: string;
-  geometryUrl: string;
-  geometrySize: number;
-  cleanupKeys: string[];
-};
-
 export type AccessCache = {
   allowed: boolean;
   email: string;

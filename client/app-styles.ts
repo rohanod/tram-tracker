@@ -221,17 +221,12 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .inline-alert { padding: 10px 12px; border: 1px solid var(--red-100); border-radius: var(--tracker-radius-control); background: var(--red-25); color: var(--red-700); display: flex; justify-content: space-between; }
 .inline-alert button { border: 0; background: transparent; color: inherit; font-weight: 700; }
 
-.auth-page, .upload-page { min-height: 100dvh; padding: 24px; background: var(--tracker-paper); display: grid; place-items: center; }
-.auth-panel, .upload-panel { width: min(100%, 560px); padding: 34px; border: 1px solid var(--tracker-border); border-radius: var(--tracker-radius-modal); background: var(--color-surface); }
-.auth-panel h1, .upload-panel h1 { margin: 6px 0 12px; font-size: 34px; letter-spacing: -.025em; }
-.auth-panel p, .upload-panel p { color: var(--color-text-secondary); }
+.auth-page { min-height: 100dvh; padding: 24px; background: var(--tracker-paper); display: grid; place-items: center; }
+.auth-panel { width: min(100%, 560px); padding: 34px; border: 1px solid var(--tracker-border); border-radius: var(--tracker-radius-modal); background: var(--color-surface); }
+.auth-panel h1 { margin: 6px 0 12px; font-size: 34px; letter-spacing: -.025em; }
+.auth-panel p { color: var(--color-text-secondary); }
 .auth-panel .button { width: 100%; margin-top: 10px; }
 .eyebrow { margin: 0; color: var(--color-text) !important; font-weight: 700; }
-.back-link { color: var(--color-text-secondary); }
-.current-data { padding: 12px; border: 1px solid var(--tracker-border); border-radius: var(--tracker-radius-control); background: var(--tracker-paper); }
-.file-field { margin: 16px 0; display: grid; gap: 8px; font-weight: 650; }
-.file-field input { padding: 12px; border: 1px solid var(--tracker-border); border-radius: var(--tracker-radius-control); }
-.upload-status { min-height: 24px; }
 
 @media (hover: hover) and (pointer: fine) {
   .button:hover:not(:disabled), .icon-button:hover:not(:disabled), .filter-control:hover, .select-option:hover, .vehicle-table tbody tr:hover, .vehicle-card:hover, .pagination button:hover:not(:disabled), .calendar-grid button:hover:not(:disabled), .calendar-actions button:hover:not(:disabled), .drag-handle:hover { background: var(--tracker-row-hover); }
@@ -311,8 +306,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .filter-dialog-grid .full, .filter-dialog-grid .date-range-control { grid-column: auto; }
   .calendar-months { grid-template-columns: 1fr; }
   .confirm-modal .modal-header { min-height: 210px; }
-  .auth-page, .upload-page { padding: 16px; }
-  .auth-panel, .upload-panel { padding: 28px 22px; }
+  .auth-page { padding: 16px; }
+  .auth-panel { padding: 28px 22px; }
 }
 
 @media (max-width: 360px) {

@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { TRANSIT_FILES, TRANSIT_SOURCE_DIR } from "./transit-data-source.mjs";
 
-const metadata = JSON.parse(await readFile("storage-data/tpg-lines.info.json", "utf8"));
+const metadata = JSON.parse(await readFile(join(TRANSIT_SOURCE_DIR, TRANSIT_FILES.metadata), "utf8"));
 if (!Array.isArray(metadata?.lines)) throw new Error("Add TPG line data first.");
 
 const directions = Object.fromEntries(metadata.lines

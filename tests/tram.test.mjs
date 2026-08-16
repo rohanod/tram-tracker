@@ -3,6 +3,8 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { gunzipSync } from "node:zlib";
+import { buildTransitBundle, TRANSIT_FILES, TRANSIT_SOURCE_DIR } from "../scripts/transit-data-source.mjs";
 
 async function loadSharedModule() {
   const dir = await mkdtemp(join(tmpdir(), "tram-shared-"));
@@ -221,7 +223,7 @@ test("nearest transit stops support compact and raw metadata without duplicate n
 });
 
 test("local TPG line data contains the full mixed-mode catalog", async () => {
-  const metadata = JSON.parse(await readFile(new URL("../storage-data/tpg-lines.info.json", import.meta.url), "utf8"));
+  const metadata = JSON.parse(await readFile(join(TRANSIT_SOURCE_DIR, TRANSIT_FILES.metadata), "utf8"));
   const types = new Set(metadata.lines.map((line) => line.vehicle));
   assert.equal(metadata.lines.length, 78);
   assert.equal(metadata.lines.reduce((count, line) => count + line.directions.length, 0), 156);
@@ -240,46 +242,31 @@ test("server not_found means a pending delete is already settled", async () => {
   assert.equal(isDeleteSettledResult({ ok: false, reason: "unauthorized" }), false);
 });
 
-test("transit cleanup keeps stale keys and never deletes active files", async () => {
-  const { collectTransitCleanupKeys, parseCleanupKeys } = await loadSyncModule();
-  const rows = [
-    { metadataKey: "public/old-meta", geometryKey: "public/old-geometry", pendingDeleteKeys: '["public/retry","public/old-meta"]' },
-    { metadataKey: "public/current-meta", geometryKey: "public/other-geometry", pendingDeleteKeys: "invalid" },
-    { metadataKey: "public/current-meta", geometryKey: "public/current-geometry", pendingDeleteKeys: '["public/current-geometry"]' }
-  ];
+test("cached transit payloads use the runtime validator", async () => {
+  const source = await readFile(new URL("../client/transit-data.ts", import.meta.url), "utf8");
 
-  assert.deepEqual(collectTransitCleanupKeys(rows, ["public/current-meta", "public/current-geometry"], ["public/recovered", "public/current-meta"]), [
-    "public/recovered",
-    "public/retry",
-    "public/old-meta",
-    "public/old-geometry",
-    "public/other-geometry"
-  ]);
-  assert.deepEqual(parseCleanupKeys('["public/a","public/a"," public/b "]'), ["public/a", "public/b"]);
-  assert.deepEqual(parseCleanupKeys("not-json"), []);
+  assert.match(source, /validateTransitPayloads\(cached\.metadata, cached\.geometry\)/);
+  assert.doesNotMatch(source, /\bvalidatePayload\(/);
 });
 
-test("compact stop payload fits inside a conservative activation frame budget", async () => {
-  const { utf8ByteLength } = await loadSyncModule();
-  const source = JSON.parse(await readFile(new URL("../storage-data/tpg-stops.compact.json", import.meta.url), "utf8"));
-  const stopsPayload = JSON.stringify({ stops: source.s.map((stop) => ({ n: stop[2], a: stop[3], o: stop[4] })) });
-  const key = "public/" + "x".repeat(64);
-  const input = {
-    version: "v".repeat(80),
-    metadataKey: key,
-    metadataUrl: "https://rapid-signal-1f4a040df6.lakebed.app/storage/" + key,
-    metadataSize: 5 * 1024 * 1024,
-    geometryKey: key,
-    geometryUrl: "https://rapid-signal-1f4a040df6.lakebed.app/storage/" + key,
-    geometrySize: 5 * 1024 * 1024,
-    stopsPayload,
-    supersededKeys: Array.from({ length: 24 }, (_, index) => `public/${index}-${"x".repeat(64)}`)
-  };
-  const frame = JSON.stringify({ id: 1, op: "mutation.run", name: "activateTransitData", args: [input] });
+test("canonical transit source builds a deterministic compressed bundle", async () => {
+  const first = await buildTransitBundle();
+  const second = await buildTransitBundle();
+  const payload = JSON.parse(gunzipSync(Buffer.from(first.gzipBase64, "base64")).toString("utf8"));
+  const directionIds = new Set(payload.metadata.lines.flatMap((line) => line.d.map((direction) => direction.i)));
+  const geometryIds = new Set(payload.geometry.features.map((feature) => feature.i));
 
-  assert.equal(utf8ByteLength("é"), 2);
-  assert.ok(utf8ByteLength(stopsPayload) < 50 * 1024);
-  assert.ok(utf8ByteLength(frame) < 60 * 1024);
+  assert.equal(TRANSIT_SOURCE_DIR, "/Users/rohan/Documents/tpg-line-data/out-data");
+  assert.deepEqual(Object.values(TRANSIT_FILES), ["tpg-lines.info.json", "tpg-routes.polyline.json", "tpg-stops.compact.json"]);
+  assert.equal(Object.values(TRANSIT_FILES).some((name) => name.endsWith(".geojson")), false);
+  assert.equal(first.version, second.version);
+  assert.equal(first.gzipBase64, second.gzipBase64);
+  assert.equal(payload.version, first.version);
+  assert.equal(payload.metadata.lines.length, 78);
+  assert.equal(directionIds.size, 156);
+  assert.equal(geometryIds.size, 156);
+  assert.deepEqual(geometryIds, directionIds);
+  assert.equal(first.stops.s.length, 843);
 });
 
 test("recent Trip Entries returns only the two newest captures", async () => {

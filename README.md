@@ -1,49 +1,58 @@
 # tram-tracker
 
-A private Lakebed capsule for saving tram vehicle numbers.
+A private Lakebed capsule for saving transit vehicle numbers.
+
+## Server configuration
+
+Define the allowed Google user and Shortcut token in `.env.lakebed.server`:
+
+```sh
+ALLOWED_USER_ID=google:your-user-id
+SHORTCUT_TOKEN=your-secret-token
+```
+
+## Canonical transit data
+
+Development and deployment always read exactly these generated files:
+
+```text
+/Users/rohan/Documents/tpg-line-data/out-data/tpg-lines.info.json
+/Users/rohan/Documents/tpg-line-data/out-data/tpg-routes.polyline.json
+/Users/rohan/Documents/tpg-line-data/out-data/tpg-stops.compact.json
+```
+
+`tpg-routes.geojson` is not read or staged. Run the generator in `tpg-line-data` before starting or deploying this app when the source data changes.
 
 ## Run locally
 
-Create a server-only env file:
-
 ```sh
-printf 'ALLOWED_EMAIL=you@example.com\n' > .env.lakebed.server
+bun run dev
 ```
 
-Then start Lakebed through the clean development mirror:
-
-```sh
-npm run dev
-```
-
-The app requires Google sign-in and only allows the email configured in `ALLOWED_EMAIL`.
-
-The mirror watcher copies only `client/`, `server/`, `shared/`, `storage-data/`, `lakebed.json`, and `.env.lakebed.server` into `.lakebed/dev-capsule`. This avoids Lakebed dev rebuilding when `.git` metadata changes in the project root.
-
-The dev mirror also disables PWA static endpoints and service-worker registration locally. The root capsule still serves the manifest/service worker/icon on deploy; this local-only transform avoids a Lakebed dev crash after static endpoint requests.
+The wrapper copies only the three canonical transit files into `.lakebed/dev-capsule/storage-data`. This is a local filesystem copy; it does not upload or change production data. It also excludes Git metadata and disables PWA endpoints locally to avoid unnecessary Lakebed rebuilds.
 
 ## Deploy
 
 ```sh
-npm run deploy
+bun run deploy
 ```
 
-The deploy wrapper stages only `client/`, `server/`, `shared/`, `lakebed.json`, `.env.lakebed.server`, and compact storage placeholders. Do not run `npx lakebed deploy` from the repository root: Git metadata and local audit files can exceed Lakebed's deployment request limit.
+The wrapper validates the canonical files, compacts and gzips line metadata plus polyline geometry into the staged server, copies the compact stop index for Shortcut lookup, build-checks the staged capsule, and deploys it. Production transit updates require no maintenance page or Lakebed Storage upload.
 
-## What v1 does
+Do not run `npx lakebed dev` or `npx lakebed deploy` from the repository root.
 
-- Saves 3-4 digit tram vehicle numbers.
-- Uses current location plus Geneva local time to suggest a commute leg.
-- Lets the leg be edited before saving and after saving.
-- Stores entries in the Lakebed database and in IndexedDB on the device.
-- Queues offline saves after the device has previously signed in online.
+## What the app does
+
+- Saves 3–4 digit transit vehicle numbers.
+- Uses current location and transit geometry to suggest route context.
+- Supports vehicle notes, review filters, statistics, and offline entry sync.
+- Caches the latest deployed transit payload in IndexedDB for offline reloads.
+- Exposes token-protected Shortcut save, lookup, and nearest-stop endpoints.
 - Registers a manifest and service worker for installable PWA behavior.
-
-Stats and unique vehicle summaries are intentionally out of scope for v1.
 
 ## Inspect local state
 
-While `npm run dev` is running:
+While `bun run dev` is running:
 
 ```sh
 npx lakebed db list --port 3000

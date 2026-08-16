@@ -17,9 +17,8 @@ import { localEntryFromServerEntry, mergeServerEntries, mergeServerVehicleNotes,
 import { shortcutPrefillFromSearch } from "./prefill";
 import { TrackerScreen, type ReviewFilters } from "./screens";
 import { loadTransitData } from "./transit-data";
-import type { LineInfo, LocalEntry, LocalVehicleNote, LocationState, MutationResult, ServerEntry, ServerVehicleNote, TransitDataConfig, UserSettings, Viewer } from "./types";
+import type { LineInfo, LocalEntry, LocalVehicleNote, LocationState, MutationResult, ServerEntry, ServerVehicleNote, UserSettings, Viewer } from "./types";
 import { AuthGate, Toast } from "./ui";
-import { UploadDataPage } from "./upload-data";
 
 const DEFAULT_LINES = ["14", "18", "12", "17"];
 const SETTINGS_KEY = "default-lines-local-v1";
@@ -38,12 +37,10 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const viewerQuery = useQuery<Viewer>("viewer") as Viewer | [] | undefined;
   const vehicleNotesQuery = useQuery<{ items: ServerVehicleNote[] }>("vehicleNotes") as { items: ServerVehicleNote[] } | [] | undefined;
   const settingsQuery = useQuery<UserSettings>("settings") as UserSettings | [] | undefined;
-  const transitQuery = useQuery<TransitDataConfig | null>("transitData") as TransitDataConfig | [] | null | undefined;
   const viewer = Array.isArray(viewerQuery) ? undefined : viewerQuery;
   const serverEntries = (useQuery<ServerEntry[]>("entries") as ServerEntry[] | undefined) ?? [];
   const serverVehicleNotes = Array.isArray(vehicleNotesQuery) ? undefined : vehicleNotesQuery?.items;
   const serverSettings = Array.isArray(settingsQuery) ? undefined : settingsQuery;
-  const transitConfig = Array.isArray(transitQuery) ? undefined : transitQuery;
   const saveEntry = useMutation<[entry: LocalEntry], MutationResult>("saveEntry");
   const deleteEntry = useMutation<[id: string], MutationResult>("deleteEntry");
   const saveVehicleNote = useMutation<[vehicleNumber: string, note: string], MutationResult>("saveVehicleNote");
@@ -112,11 +109,11 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, []);
 
   useEffect(() => {
-    void loadTransitData(transitConfig).then((catalog) => {
+    void loadTransitData().then((catalog) => {
       if (catalog) setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog });
-      else if (transitConfig?.metadataUrl && transitConfig?.geometryUrl) setLoadError("Transit data could not be loaded. Cached entries remain available.");
+      else setLoadError("Transit data could not be loaded. Cached entries remain available.");
     });
-  }, [transitConfig?.version, transitConfig?.metadataUrl, transitConfig?.geometryUrl, isOnline]);
+  }, [isOnline]);
 
   useEffect(() => {
     if (!Array.isArray(serverSettings?.defaultLines)) return;
@@ -312,9 +309,6 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }
 
   const styles = <style>{DESIGN_SYSTEM_CSS + APP_CSS}</style>;
-  if (window.location.pathname === "/upload-data" || window.location.hash === "#/upload-data") {
-    return <>{styles}<UploadDataPage authLoading={accessLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={priorAuthorized} current={transitConfig} /></>;
-  }
   if (!canUseTracker) return <>{styles}<AuthGate authLoading={accessLoading} viewer={viewer} isOnline={isOnline} priorAuthorized={offlineAccessAllowed} /></>;
 
   return <>{styles}
@@ -325,7 +319,7 @@ function TrackerApp({ auth }: { auth: ReturnType<typeof useAuth> }) {
       onChangeFilters={setFilters} onNew={openCreate}
       onOpen={(entry) => { setActiveEntry(entry); setDialog("details"); }}
       onOpenFilters={() => setDialog("filters")} onOpenSettings={() => setDialog("settings")}
-      onRetry={() => { setLoadError(""); setSyncKick((value) => value + 1); void loadTransitData(transitConfig).then((catalog) => catalog && setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog })); }}
+      onRetry={() => { setLoadError(""); setSyncKick((value) => value + 1); void loadTransitData().then((catalog) => catalog && setLineCatalog({ ...DEFAULT_LINE_CATALOG, ...catalog })); }}
     />
     {dialog === "create" ? <EntryDialog mode="create" initialValue={createSeed} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("")} onSubmit={(value) => void createEntry(value)} /> : null}
     {dialog === "edit" && activeEntry ? <EntryDialog mode="edit" entry={activeEntry} location={location} lineCatalog={lineCatalog} defaultLines={defaultLines} busy={busy} error={dialogError} onClose={() => setDialog("details")} onSubmit={(value) => void updateEntry(value)} /> : null}

@@ -4,15 +4,17 @@ The running app is the design source of truth. Do not use the retired Figma file
 
 ## Transit data
 
-- Generated files: `storage-data/transit-metadata.json` and `storage-data/transit-geometry.json`.
-- Build with `/usr/local/bin/bun scripts/build-transit-data.mjs` after replacing `new-data/tpg-lines.info.json`, `new-data/tpg-routes.geojson`, or `lines.json`.
-- Keep generated data out of the Lakebed app bundle. Upload both files through the allowlisted `/upload-data` maintenance page after deploy.
-- The client fetches the active Lakebed Storage URLs, validates both payloads, and caches the complete payload in IndexedDB for offline use.
+- `/Users/rohan/Documents/tpg-line-data/out-data` is the only source of truth.
+- Use exactly `tpg-lines.info.json`, `tpg-routes.polyline.json`, and `tpg-stops.compact.json`; GeoJSON is not part of this app workflow.
+- `bun run dev` copies those files into the local capsule only. It never uploads or changes production data.
+- `bun run deploy` validates them, compacts line metadata, gzips metadata plus polyline geometry into the staged server, and imports the compact stop index for Shortcut lookup.
+- Production fetches `/api/transit-data`, decompresses it with the browser's native `DecompressionStream`, validates it, and caches the payload in IndexedDB for offline use.
+- There is no `/upload-data` page and no Lakebed Storage activation workflow.
 - Metadata includes every available transit mode and line. Never filter the catalog to tram lines.
 - Runtime line selectors, filters, colors, directions, stops, and geometry all come from this metadata.
 - The app automatically chooses black or white line-pill text when the source foreground does not meet contrast.
 - Default quick-access lines are ordered `14`, `18`, `12`, `17`; settings allow zero to four unique official lines.
-- Replacing the active files must not require a client code change.
+- Replacing the active files requires only regenerating `tpg-line-data/out-data` and running `bun run deploy`.
 
 ## Shortcuts
 

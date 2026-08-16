@@ -245,7 +245,7 @@ paths:
               $ref: "#/components/schemas/NearestStopsRequest"
       responses:
         "200":
-          description: Nearest stops returned, or only Other when transit data is unavailable.
+          description: Nearest bundled transit stops followed by Other.
           content:
             application/json:
               schema:
@@ -263,7 +263,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: "Server setup missing `SHORTCUT_TOKEN` or `ALLOWED_USER_ID`."
+          description: "Server setup missing `SHORTCUT_TOKEN`."
           content:
             application/json:
               schema:
