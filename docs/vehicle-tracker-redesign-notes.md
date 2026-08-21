@@ -7,14 +7,14 @@ The running app is the design source of truth. Do not use the retired Figma file
 - `/Users/rohan/Documents/tpg-line-data/out-data` is the only source of truth.
 - Use exactly `tpg-lines.info.json`, `tpg-routes.polyline.json`, and `tpg-stops.compact.json`; GeoJSON is not part of this app workflow.
 - `bun run dev` copies those files into the local capsule only. It never uploads or changes production data.
-- `bun run deploy` validates them, compacts line metadata, gzips metadata plus polyline geometry into the staged server, and imports the compact stop index for Shortcut lookup.
-- Production fetches `/api/transit-data`, decompresses it with the browser's native `DecompressionStream`, validates it, and caches the payload in IndexedDB for offline use.
-- There is no `/upload-data` page and no Lakebed Storage activation workflow.
+- `bun run deploy` validates them, stages metadata/geometry placeholders, and imports the compact stop index as a Shortcut fallback without embedding the large transit payload.
+- Production reads the active metadata and geometry URLs from the authenticated `transitData` query, validates both Storage objects, and caches them in IndexedDB for offline use.
+- `/upload-data` is an allowlisted maintenance page. It uploads metadata and polyline geometry to public Lakebed Storage, activates the compact stop index, and deletes superseded objects only after activation succeeds.
 - Metadata includes every available transit mode and line. Never filter the catalog to tram lines.
 - Runtime line selectors, filters, colors, directions, stops, and geometry all come from this metadata.
 - The app automatically chooses black or white line-pill text when the source foreground does not meet contrast.
 - Default quick-access lines are ordered `14`, `18`, `12`, `17`; settings allow zero to four unique official lines.
-- Replacing the active files requires only regenerating `tpg-line-data/out-data` and running `bun run deploy`.
+- Replacing active transit data requires regenerating `tpg-line-data/out-data`, then selecting the exact three canonical files in `/upload-data`; run `bun run deploy` only when application code or the bundled Shortcut fallback changes.
 
 ## Shortcuts
 

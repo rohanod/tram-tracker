@@ -43,7 +43,7 @@ Deploy through the compact staged capsule:
 bun run deploy
 ```
 
-The wrappers exclude `.git`, `.lakebed`, audit output, and other repository-only files that can trigger rebuilds or exceed Lakebed's deployment request limit. Both read only `tpg-lines.info.json`, `tpg-routes.polyline.json`, and `tpg-stops.compact.json` from `/Users/rohan/Documents/tpg-line-data/out-data`; never stage `tpg-routes.geojson`. Dev copies these locally. Deploy compacts and gzips them into the staged capsule, with no browser upload flow or Lakebed Storage dependency.
+The wrappers exclude `.git`, `.lakebed`, audit output, and other repository-only files that can trigger rebuilds or exceed Lakebed's deployment request limit. Both read only `tpg-lines.info.json`, `tpg-routes.polyline.json`, and `tpg-stops.compact.json` from `/Users/rohan/Documents/tpg-line-data/out-data`; never stage `tpg-routes.geojson`. Dev copies all three locally. Deploy validates them, stages metadata/geometry placeholders, and bundles the compact stop index as a Shortcut fallback. Production transit updates use the allowlisted `/upload-data` page, which stores metadata and polyline geometry in Lakebed Storage and activates compact stops.
 
 Inspect local state while `bun run dev` is running:
 
@@ -67,7 +67,7 @@ Use `endpoint({ method, path }, handler)` from `lakebed/server` when the app nee
 - One server entry.
 - One client entry.
 - Guest auth locally, with built-in Google sign-in through Shoo.
-- No file storage.
+- Hosted Storage uploads require a signed-in verified user; transit maintenance uses the allowlisted `/upload-data` page.
 - No outbound fetch in anonymous deploys. Claim the deploy before using server-side fetch.
 - Non-empty `.env.lakebed.server` files sync only after a deploy is claimed.
 - Local state resets when `bun run dev` restarts.

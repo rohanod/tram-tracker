@@ -55,6 +55,9 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
     let explicitRejection = false;
     try {
       setStatus("Validating files…");
+      if (metadata.name !== "tpg-lines.info.json" || geometry.name !== "tpg-routes.polyline.json" || stops.name !== "tpg-stops.compact.json") {
+        throw new Error("Select the canonical line info, polyline geometry, and compact stop files.");
+      }
       const metadataJson = JSON.parse(await metadata.text());
       const geometryJson = JSON.parse(await geometry.text());
       const stopsJson = JSON.parse(await stops.text());
@@ -144,7 +147,7 @@ export function UploadDataPage({ authLoading, viewer, isOnline, priorAuthorized,
     <p>Private maintenance page. Upload line info, geometry, and the compact stop index together.</p>
     {current ? <p className="current-data">Active version: <code>{current.version}</code></p> : <p className="current-data">No active transit data.</p>}
     <label className="file-field"><span>Line info JSON</span><input key={`metadata-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.info.json" onChange={(event) => setMetadata(event.currentTarget.files?.[0] ?? null)} /></label>
-    <label className="file-field"><span>Line geometry</span><input key={`geometry-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.geojson,.polyline.json" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
+    <label className="file-field"><span>Line geometry</span><input key={`geometry-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.polyline.json" onChange={(event) => setGeometry(event.currentTarget.files?.[0] ?? null)} /></label>
     <label className="file-field"><span>Stop index</span><input key={`stops-${inputKey}`} type="file" disabled={busy} accept="application/json,.json,.stops.json" onChange={(event) => setStops(event.currentTarget.files?.[0] ?? null)} /></label>
     <button className="button primary" type="button" disabled={busy || !metadata || !geometry || !stops} onClick={() => void upload()}>{busy ? "Working…" : "Upload and activate"}</button>
     <p className="upload-status" role="status">{status}</p>

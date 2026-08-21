@@ -245,7 +245,7 @@ paths:
               $ref: "#/components/schemas/NearestStopsRequest"
       responses:
         "200":
-          description: Nearest bundled transit stops followed by Other.
+          description: Nearest active uploaded transit stops, with the bundled stop index as fallback, followed by Other.
           content:
             application/json:
               schema:

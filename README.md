@@ -37,7 +37,9 @@ The wrapper copies only the three canonical transit files into `.lakebed/dev-cap
 bun run deploy
 ```
 
-The wrapper validates the canonical files, compacts and gzips line metadata plus polyline geometry into the staged server, copies the compact stop index for Shortcut lookup, build-checks the staged capsule, and deploys it. Production transit updates require no maintenance page or Lakebed Storage upload.
+The wrapper validates the canonical files, stages tiny metadata and geometry placeholders, copies the compact stop index as a Shortcut fallback, build-checks the staged capsule, and deploys the application. It refuses deployment when the serialized Lakebed artifact reaches the 2 MiB request limit.
+
+Production metadata and geometry are not embedded in the application bundle. After deploying the compatibility release, visit `/upload-data`, sign in with the allowlisted Google account, and select the exact three canonical files listed above. The page uploads metadata and polyline geometry to public Lakebed Storage, activates the compact stop index, then deletes superseded transit objects. Failed deletions remain queued for retry; Trip Entries are never part of transit cleanup.
 
 Do not run `npx lakebed dev` or `npx lakebed deploy` from the repository root.
 
@@ -46,7 +48,7 @@ Do not run `npx lakebed dev` or `npx lakebed deploy` from the repository root.
 - Saves 3–4 digit transit vehicle numbers.
 - Uses current location and transit geometry to suggest route context.
 - Supports vehicle notes, review filters, statistics, and offline entry sync.
-- Caches the latest deployed transit payload in IndexedDB for offline reloads.
+- Caches the latest active Storage-backed transit data in IndexedDB for offline reloads.
 - Exposes token-protected Shortcut save, lookup, and nearest-stop endpoints.
 - Registers a manifest and service worker for installable PWA behavior.
 

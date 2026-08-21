@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, rm, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,12 +30,19 @@ try {
   if (build.status !== 0) {
     process.exitCode = build.status ?? 1;
   } else {
-    const deploy = spawnSync("npx", ["lakebed", "deploy"], {
-      cwd: stage,
-      stdio: "inherit"
-    });
-    if (deploy.error) throw deploy.error;
-    process.exitCode = deploy.status ?? 1;
+    const requestBytes = (await stat(buildArtifact)).size;
+    console.log(`Lakebed deployment artifact: ${requestBytes.toLocaleString()} bytes.`);
+    if (requestBytes >= 2 * 1024 * 1024) {
+      console.error("Refusing deployment: the Lakebed request would reach the 2 MiB limit.");
+      process.exitCode = 1;
+    } else {
+      const deploy = spawnSync("npx", ["lakebed", "deploy"], {
+        cwd: stage,
+        stdio: "inherit"
+      });
+      if (deploy.error) throw deploy.error;
+      process.exitCode = deploy.status ?? 1;
+    }
   }
 } finally {
   await Promise.all([

@@ -3,8 +3,7 @@ import { setDirectionOptions } from "../shared/tram";
 import localGeometry from "../storage-data/tpg-routes.polyline.json";
 import localMetadata from "../storage-data/tpg-lines.info.json";
 import { debugSync, errorMessage, readMeta, writeMeta } from "./local-store";
-import { TRANSIT_DATA_VERSION } from "./transit-data.generated";
-import type { LineInfo } from "./types";
+import type { LineInfo, TransitDataConfig } from "./types";
 
 const CACHE_KEY = "transit-data-cache-v1";
 
@@ -29,26 +28,29 @@ type RuntimeData = {
   catalog: Record<string, LineInfo>;
 };
 
-export async function loadTransitData(): Promise<Record<string, LineInfo> | null> {
+export async function loadTransitData(config: TransitDataConfig | null | undefined): Promise<Record<string, LineInfo> | null> {
   if (typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.hostname === "[::1]" || location.hostname.endsWith(".localhost"))) {
     return applyPayload(localMetadata as MetadataPayload, localGeometry as GeometryPayload);
   }
 
   const cached = await readCached();
   const cachedCatalog = cached ? applyPayload(cached.metadata, cached.geometry) : null;
-  if (cached?.version === TRANSIT_DATA_VERSION || (typeof navigator !== "undefined" && !navigator.onLine)) return cachedCatalog;
+  if (!config?.version || !config.metadataUrl || !config.geometryUrl || cached?.version === config.version || (typeof navigator !== "undefined" && !navigator.onLine)) {
+    return cachedCatalog;
+  }
 
   try {
-    if (typeof DecompressionStream === "undefined") throw new Error("This browser cannot decompress transit data.");
-    const response = await fetch(`/api/transit-data?v=${encodeURIComponent(TRANSIT_DATA_VERSION)}`, { cache: "force-cache" });
-    if (!response.ok) throw new Error(`Transit data HTTP ${response.status}`);
-    const binary = atob((await response.text()).trim());
-    const compressed = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
-    const payload = JSON.parse(await new Response(stream).text()) as CachedPayload;
-    if (payload.version !== TRANSIT_DATA_VERSION) throw new Error("Transit data version mismatch.");
-    const catalog = applyPayload(payload.metadata, payload.geometry);
-    await writeMeta(CACHE_KEY, JSON.stringify(payload));
+    const [metadataResponse, geometryResponse] = await Promise.all([
+      fetch(config.metadataUrl, { cache: "force-cache" }),
+      fetch(config.geometryUrl, { cache: "force-cache" })
+    ]);
+    if (!metadataResponse.ok || !geometryResponse.ok) {
+      throw new Error(`Transit data HTTP ${metadataResponse.status}/${geometryResponse.status}`);
+    }
+    const metadata = await metadataResponse.json() as MetadataPayload;
+    const geometry = await geometryResponse.json() as GeometryPayload;
+    const catalog = applyPayload(metadata, geometry);
+    await writeMeta(CACHE_KEY, JSON.stringify({ version: config.version, metadata, geometry }));
     return catalog;
   } catch (err) {
     debugSync("transit-data-refresh-error", { error: errorMessage(err) });
