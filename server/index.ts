@@ -313,6 +313,16 @@ export default capsule({
       })
     ),
 
+    uploadDataRedirect: endpoint({ method: "GET", path: "/upload-data" }, () =>
+      text("", {
+        status: 302,
+        headers: {
+          "Location": "/#/upload-data",
+          "Cache-Control": "no-store"
+        }
+      })
+    ),
+
     shortcutSaveGet: endpoint({ method: "GET", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),
 
     shortcutSavePost: endpoint({ method: "POST", path: "/api/shortcut/save" }, (ctx, req) => saveShortcutEntry(ctx, req)),

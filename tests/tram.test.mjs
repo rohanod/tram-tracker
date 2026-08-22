@@ -317,6 +317,7 @@ test("production transit uses Storage and keeps bundled Shortcut stops as fallba
   ]);
 
   assert.doesNotMatch(serverSource, /TRANSIT_DATA_GZIP_BASE64|path: "\/api\/transit-data"/);
+  assert.match(serverSource, /path: "\/upload-data"[\s\S]*"Location": "\/#\/upload-data"/);
   assert.match(serverSource, /ctx\.db\.transitStopIndexes/);
   assert.match(serverSource, /BUNDLED_TRANSIT_STOPS/);
   assert.match(uploadSource, /tpg-lines\.info\.json/);
